@@ -1,81 +1,77 @@
 import streamlit as st
 from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
 import pandas as pd
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
-import concurrent.futures
-from wordcloud import WordCloud
-import matplotlib.pyplot as plt
 import plotly.express as px
+import traceback
 
-st.set_page_config(page_title="YouTube Sentiment & Engagement Dashboard", layout="wide", initial_sidebar_state='expanded')
-
-# API key from Streamlit secrets (store your key safely in Streamlit Cloud)
+# Initialize YouTube API client using API key from Streamlit secrets
 API_KEY = st.secrets["YOUTUBE_API_KEY"]
 youtube = build('youtube', 'v3', developerKey=API_KEY)
-analyzer = SentimentIntensityAnalyzer()
 
-@st.cache_data(show_spinner=False)
 def get_video_ids(channel_id):
     video_ids = []
     next_page_token = None
-    while True:
-        res = youtube.search().list(
-            part='id',
-            channelId=channel_id,
-            maxResults=50,
-            pageToken=next_page_token,
-            type='video',
-            order='date'
-        ).execute()
-        for item in res['items']:
-            video_ids.append(item['id']['videoId'])
-        next_page_token = res.get('nextPageToken')
-        if not next_page_token:
-            break
+    try:
+        while True:
+            res = youtube.search().list(
+                part='id',
+                channelId=channel_id,
+                maxResults=50,
+                pageToken=next_page_token,
+                type='video',
+                order='date'  # get latest videos first
+            ).execute()
+
+            for item in res['items']:
+                video_ids.append(item['id']['videoId'])
+
+            next_page_token = res.get('nextPageToken')
+            if not next_page_token:
+                break
+    except HttpError as e:
+        st.error(f"Google API error: HTTP {e.resp.status}\n{e.content.decode('utf-8') if hasattr(e.content, 'decode') else e.content}")
+        st.text(traceback.format_exc())
+        return []
+    except Exception as e:
+        st.error(f"Unexpected error: {e}")
+        st.text(traceback.format_exc())
+        return []
     return video_ids
 
-@st.cache_data(show_spinner=False)
-def get_comments(video_id, max_comments):
+def get_comments(video_id):
     comments = []
     try:
         results = youtube.commentThreads().list(
             part="snippet",
             videoId=video_id,
             textFormat="plainText",
-            maxResults=max_comments
+            maxResults=100
         ).execute()
-        for item in results.get('items', []):
+
+        for item in results['items']:
             comment = item['snippet']['topLevelComment']['snippet']['textDisplay']
             comments.append(comment)
-    except:
-        pass
+    except HttpError as e:
+        st.warning(f"Could not fetch comments for video {video_id}. Error: {e}")
+    except Exception as e:
+        st.warning(f"Unexpected error fetching comments: {e}")
     return comments
 
-@st.cache_data(show_spinner=False)
-def get_video_stats(video_ids):
-    stats = {}
-    for vid in video_ids:
-        try:
-            response = youtube.videos().list(part='statistics', id=vid).execute()
-            if response['items']:
-                stats[vid] = response['items'][0]['statistics']
-        except:
-            stats[vid] = {}
-    return stats
-
 def analyze_sentiment(text):
+    analyzer = SentimentIntensityAnalyzer()
     score = analyzer.polarity_scores(text)['compound']
-    if score >= 0.05:
+    if score > 0.1:
         return "Positive"
-    elif score <= -0.05:
+    elif score < -0.1:
         return "Negative"
     else:
         return "Neutral"
 
 def plot_sentiment_chart(sentiment_counts, chart_type):
-    # Use RGBA for gradient-like transparency effect
     colors = {
-        'Positive': 'rgba(74, 144, 226, 0.9)',   # Deep Blue (semi-transparent)
+        'Positive': 'rgba(74, 144, 226, 0.9)',   # Deep Blue
         'Negative': 'rgba(255, 111, 97, 0.9)',   # Coral Red
         'Neutral': 'rgba(169, 204, 227, 0.9)'    # Light Sky Blue
     }
@@ -117,110 +113,63 @@ def plot_sentiment_chart(sentiment_counts, chart_type):
             textposition='outside',
             marker_line_color='black',
             marker_line_width=1.5,
-            opacity=0.85  # simulate gradient transparency
+            opacity=0.85
         )
         fig.update_layout(bargap=0.4)
 
-    # Shared layout tweaks for all charts
     fig.update_layout(
         title_font=dict(size=22, family='Arial'),
         font=dict(size=14, family='Arial'),
         legend_title=None,
-        plot_bgcolor='rgba(0,0,0,0)',      # transparent background
-        paper_bgcolor='rgba(255,255,255,1)' # white paper background
+        plot_bgcolor='rgba(0,0,0,0)',
+        paper_bgcolor='rgba(255,255,255,1)'
     )
 
     return fig
 
-def generate_wordcloud(text, title):
-    if not text.strip():
-        st.write(f"No {title.lower()} comments to display.")
-        return
-    wc = WordCloud(width=500, height=250,
-                   background_color='white',
-                   colormap='Blues').generate(text)
-    fig, ax = plt.subplots(figsize=(7, 3))
-    ax.imshow(wc, interpolation='bilinear')
-    ax.axis("off")
-    st.subheader(title)
-    st.pyplot(fig)
-
 def main():
-    st.markdown("<h1 style='text-align:center; color:#1E40AF; font-weight:bold;'>📊 YouTube Sentiment & Engagement Dashboard</h1>", unsafe_allow_html=True)
-    st.markdown("---")
+    st.title("📊 YouTube Sentiment & Engagement Dashboard")
 
-    channel_id = st.text_input("Enter YouTube Channel ID (e.g. UCrU83y4nqkmBIid8IBg):")
+    channel_id = st.text_input("Enter YouTube Channel ID (e.g. UCrU8kmBIid8IBg):")
 
     if channel_id:
-        with st.spinner("Fetching videos..."):
-            video_ids = get_video_ids(channel_id)
-        st.success(f"🎥 Found {len(video_ids)} videos.")
+        st.info("Fetching videos and comments, please wait...")
+        video_ids = get_video_ids(channel_id)
 
-        max_videos = st.slider("Number of videos to analyze", 1, min(len(video_ids), 100), 10)
-        max_comments = st.slider("Number of comments per video", 10, 100, 50)
+        if not video_ids:
+            st.error("No videos found or API error occurred.")
+            return
 
-        chart_type = st.selectbox("Select Sentiment Chart Type", ['Pie Chart', 'Donut Chart', 'Bar Chart'])
+        num_videos = st.slider("Number of videos to analyze", 1, min(50, len(video_ids)), 10)
 
-        if st.button("Analyze Comments"):
-            limited_video_ids = video_ids[:max_videos]
+        video_ids = video_ids[:num_videos]
 
-            progress_bar = st.progress(0)
-            final_data = []
+        final_data = []
 
-            with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
-                futures = {executor.submit(get_comments, vid, max_comments): vid for vid in limited_video_ids}
-                for i, future in enumerate(concurrent.futures.as_completed(futures)):
-                    vid = futures[future]
-                    comments = future.result()
-                    for comment in comments:
-                        sentiment = analyze_sentiment(comment)
-                        final_data.append({
-                            "video_id": vid,
-                            "comment": comment,
-                            "sentiment": sentiment
-                        })
-                    progress_bar.progress((i + 1) / len(limited_video_ids))
+        for vid in video_ids:
+            comments = get_comments(vid)
+            for comment in comments:
+                sentiment = analyze_sentiment(comment)
+                final_data.append({"video_id": vid, "comment": comment, "sentiment": sentiment})
 
-            df = pd.DataFrame(final_data)
-            total_comments = len(df)
+        if not final_data:
+            st.warning("No comments found for the selected videos.")
+            return
 
-            video_stats = get_video_stats(limited_video_ids)
-            total_views = sum(int(stats.get('viewCount', 0)) for stats in video_stats.values())
-            total_likes = sum(int(stats.get('likeCount', 0)) for stats in video_stats.values())
+        df = pd.DataFrame(final_data)
 
-            col1, col2 = st.columns(2)
-            with col1:
-                st.markdown(f"### 💬 Total comments analyzed: **{total_comments:,}**")
-                st.markdown(f"### 👁️ Total Views: **{total_views:,}**")
-                st.markdown(f"### 👍 Total Likes: **{total_likes:,}**")
+        st.write(f"💬 Total comments analyzed: {len(df)}")
 
-                sentiment_counts = df['sentiment'].value_counts()
-                sentiment_percent = (sentiment_counts / sentiment_counts.sum() * 100).round(2)
+        sentiment_counts = df['sentiment'].value_counts()
 
-                fig = plot_sentiment_chart(sentiment_counts, chart_type)
-                st.plotly_chart(fig, use_container_width=True)
+        chart_type = st.selectbox("Choose sentiment chart type", ['Pie Chart', 'Donut Chart', 'Bar Chart'])
 
-                st.markdown(f"**Positive:** {sentiment_percent.get('Positive', 0)}%  |  "
-                            f"**Negative:** {sentiment_percent.get('Negative', 0)}%  |  "
-                            f"**Neutral:** {sentiment_percent.get('Neutral', 0)}%")
+        fig = plot_sentiment_chart(sentiment_counts, chart_type)
+        st.plotly_chart(fig, use_container_width=True)
 
-                engagement_rate = (total_likes / total_views * 100) if total_views > 0 else 0
-                st.markdown(f"### 📊 Engagement Rate (Likes / Views): **{engagement_rate:.2f}%**")
-
-            with col2:
-                positive_comments = " ".join(df[df.sentiment == 'Positive']['comment'])
-                negative_comments = " ".join(df[df.sentiment == 'Negative']['comment'])
-
-                generate_wordcloud(positive_comments, "Positive Comments Word Cloud")
-                generate_wordcloud(negative_comments, "Negative Comments Word Cloud")
-
-            csv = df.to_csv(index=False).encode('utf-8')
-            st.download_button(
-                label="Download Comments & Sentiments CSV",
-                data=csv,
-                file_name='youtube_sentiment.csv',
-                mime='text/csv',
-            )
+        # Engagement stats placeholders (you can extend to get views/likes)
+        st.write("📺 Overall Engagement")
+        st.write(f"👁️ Total Videos Analyzed: {num_videos}")
 
 if __name__ == "__main__":
     main()
