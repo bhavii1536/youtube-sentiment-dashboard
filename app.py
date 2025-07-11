@@ -10,7 +10,7 @@ import plotly.express as px
 st.set_page_config(page_title="YouTube Sentiment & Engagement Dashboard", layout="wide", initial_sidebar_state='expanded')
 
 # API key from Streamlit secrets (store your key safely in Streamlit Cloud)
-API_KEY = st.secrets["AIzaSyBClkFCKIDKI4eAL79bNzAIpHRTlT58uuM"]
+API_KEY = st.secrets["YOUTUBE_API_KEY"]
 youtube = build('youtube', 'v3', developerKey=API_KEY)
 analyzer = SentimentIntensityAnalyzer()
 
