@@ -12,10 +12,7 @@ youtube = build('youtube', 'v3', developerKey=API_KEY)
 
 def get_channel_name(channel_id):
     try:
-        res = youtube.channels().list(
-            part='snippet',
-            id=channel_id
-        ).execute()
+        res = youtube.channels().list(part='snippet', id=channel_id).execute()
         return res['items'][0]['snippet']['title'] if res['items'] else "Unknown Channel"
     except:
         return "Unknown Channel"
@@ -81,9 +78,9 @@ def analyze_sentiment(text):
 
 def plot_sentiment_chart(sentiment_counts, chart_type):
     colors = {
-        'Positive': '#6BCB77',   # Pastel green
-        'Negative': '#FF6B6B',   # Coral red
-        'Neutral': '#A0AEC0'     # Cool gray-blue
+        'Positive': '#6BCB77',  # Pastel green
+        'Negative': '#FF6B6B',  # Coral red
+        'Neutral': '#A0AEC0'    # Cool gray-blue
     }
 
     df = sentiment_counts.reset_index()
@@ -91,10 +88,8 @@ def plot_sentiment_chart(sentiment_counts, chart_type):
 
     if chart_type == 'Pie Chart':
         fig = px.pie(df, values='Count', names='Sentiment',
-                     color='Sentiment',
-                     color_discrete_map=colors,
-                     hole=0,
-                     title="Sentiment Distribution")
+                     color='Sentiment', color_discrete_map=colors,
+                     hole=0, title="Sentiment Distribution")
         fig.update_traces(
             textinfo='percent+label',
             marker=dict(line=dict(color='white', width=2)),
@@ -103,10 +98,8 @@ def plot_sentiment_chart(sentiment_counts, chart_type):
 
     elif chart_type == 'Donut Chart':
         fig = px.pie(df, values='Count', names='Sentiment',
-                     color='Sentiment',
-                     color_discrete_map=colors,
-                     hole=0.5,
-                     title="Sentiment Distribution")
+                     color='Sentiment', color_discrete_map=colors,
+                     hole=0.5, title="Sentiment Distribution")
         fig.update_traces(
             textinfo='percent+label',
             marker=dict(line=dict(color='white', width=2)),
@@ -115,10 +108,8 @@ def plot_sentiment_chart(sentiment_counts, chart_type):
 
     elif chart_type == 'Bar Chart':
         fig = px.bar(df, x='Sentiment', y='Count',
-                     color='Sentiment',
-                     color_discrete_map=colors,
-                     text='Count',
-                     title="Sentiment Counts")
+                     color='Sentiment', color_discrete_map=colors,
+                     text='Count', title="Sentiment Counts")
         fig.update_traces(
             textposition='outside',
             marker_line_color='black',
@@ -138,31 +129,45 @@ def plot_sentiment_chart(sentiment_counts, chart_type):
     return fig
 
 def main():
-    st.title("📊 YouTube Sentiment & Engagement Dashboard")
+    st.title("🌈 YouTube Sentiment & Engagement Dashboard")
 
-    channel_id = st.text_input("Enter YouTube Channel ID (e.g. UC_x5XG1OV2P6uZZ5FSM9Ttw):")
+    channel_id = st.text_input("📺 Enter YouTube Channel ID:")
 
     if channel_id:
         channel_name = get_channel_name(channel_id)
-        st.subheader(f"📺 Channel: {channel_name}")
+        st.subheader(f"✨ Channel: {channel_name}")
 
-        st.info("Fetching videos and comments, please wait...")
-        video_ids = get_video_ids(channel_id)
+        all_video_ids = get_video_ids(channel_id)
+        total_videos_found = len(all_video_ids)
+        st.success(f"🎬 Found {total_videos_found} total videos in this channel.")
 
-        if not video_ids:
+        if not all_video_ids:
             st.error("No videos found or API error occurred.")
             return
 
-        num_videos = st.slider("Number of videos to analyze", 1, min(50, len(video_ids)), 10)
-        video_ids = video_ids[:num_videos]
+        num_videos = st.slider("📌 Number of latest videos to analyze", 1, min(50, total_videos_found), 10)
+        selected_video_ids = all_video_ids[:num_videos]
+
+        st.info("Fetching comments and analyzing sentiment...")
 
         final_data = []
+        total_views = 0
+        total_likes = 0
 
-        for vid in video_ids:
+        for vid in selected_video_ids:
             comments = get_comments(vid)
             for comment in comments:
                 sentiment = analyze_sentiment(comment)
                 final_data.append({"video_id": vid, "comment": comment, "sentiment": sentiment})
+
+            try:
+                stats = youtube.videos().list(part="statistics", id=vid).execute()
+                if stats["items"]:
+                    stat = stats["items"][0]["statistics"]
+                    total_views += int(stat.get("viewCount", 0))
+                    total_likes += int(stat.get("likeCount", 0))
+            except:
+                pass
 
         if not final_data:
             st.warning("No comments found for the selected videos.")
@@ -170,17 +175,30 @@ def main():
 
         df = pd.DataFrame(final_data)
 
-        st.write(f"💬 Total comments analyzed: {len(df)}")
-
+        st.markdown("## 💬 Overall Sentiment Summary:")
+        total_comments = len(df)
         sentiment_counts = df['sentiment'].value_counts()
+        positive = sentiment_counts.get("Positive", 0)
+        negative = sentiment_counts.get("Negative", 0)
+        neutral = sentiment_counts.get("Neutral", 0)
 
-        chart_type = st.selectbox("Choose sentiment chart type", ['Pie Chart', 'Donut Chart', 'Bar Chart'])
+        def percent(part, whole):
+            return f"{(part / whole * 100):.2f}%" if whole > 0 else "0.00%"
 
+        st.write(f"**Total Comments Analyzed:** {total_comments}")
+        st.write(f"✅ Positive: {positive} ({percent(positive, total_comments)})")
+        st.write(f"❌ Negative: {negative} ({percent(negative, total_comments)})")
+        st.write(f"😐 Neutral: {neutral} ({percent(neutral, total_comments)})")
+
+        chart_type = st.selectbox("📊 Choose sentiment chart type", ['Pie Chart', 'Donut Chart', 'Bar Chart'])
         fig = plot_sentiment_chart(sentiment_counts, chart_type)
         st.plotly_chart(fig, use_container_width=True)
 
-        st.write("📊 Overall Engagement")
-        st.write(f"👁️ Total Videos Analyzed: {num_videos}")
+        st.markdown("## 📈 Overall Channel Engagement")
+        st.write(f"📺 **Total Videos Found in Channel:** {total_videos_found}")
+        st.write(f"📌 **Videos Analyzed:** {num_videos}")
+        st.write(f"👁️ **Total Views on Analyzed Videos:** {total_views:,}")
+        st.write(f"❤️ **Total Likes on Analyzed Videos:** {total_likes:,}")
 
 if __name__ == "__main__":
     main()
