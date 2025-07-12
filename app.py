@@ -4,7 +4,34 @@ from googleapiclient.errors import HttpError
 import pandas as pd
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 import plotly.express as px
-import traceback
+
+# --- BEAUTIFY with CSS: gradient bg + fonts + input styling ---
+st.markdown("""
+    <style>
+    body {
+        background: linear-gradient(135deg, #fceabb, #f8b500);
+    }
+    .reportview-container {
+        background: linear-gradient(135deg, #e0c3fc, #8ec5fc);
+        color: #222;
+        font-family: 'Quicksand', sans-serif;
+    }
+    header, footer {visibility: hidden;}
+    h1, h2, h3, h4, h5 {
+        font-family: 'Quicksand', sans-serif;
+        color: #222;
+    }
+    .stTextInput>div>div>input {
+        background-color: #fff0db;
+        border: 2px solid #f8b500;
+        border-radius: 10px;
+        padding: 8px;
+        font-size: 18px;
+        font-weight: 600;
+        color: #222;
+    }
+    </style>
+""", unsafe_allow_html=True)
 
 API_KEY = st.secrets["YOUTUBE_API_KEY"]
 youtube = build('youtube', 'v3', developerKey=API_KEY)
@@ -137,19 +164,20 @@ def main():
 
         def percent(part): return f"{(part / total_comments * 100):.2f}%" if total_comments > 0 else "0.00%"
 
-        # === Print Summary ===
-        st.markdown("### 🧾 Analysis Report")
-        st.text(f\"\"\"===== Overall Sentiment Summary =====
-Total Comments Analyzed: {total_comments}
-Positive: {positive} ({percent(positive)})
-Negative: {negative} ({percent(negative)})
-Neutral: {neutral} ({percent(neutral)})\"\"\")
-
+        # Show pie chart
         st.plotly_chart(plot_pie_chart(sentiment_counts), use_container_width=True)
 
-        st.text(f\"\"\"===== Overall Channel Engagement =====
-Total Views on {num_videos} videos: {total_views}
-Total Likes on {num_videos} videos: {total_likes}\"\"\")
+        # Print summary text below chart
+        st.markdown("### 📑 Final Summary Report")
+        st.text(f"===== Overall Sentiment Summary =====")
+        st.text(f"Total Comments Analyzed: {total_comments}")
+        st.text(f"Positive: {positive} ({percent(positive)})")
+        st.text(f"Negative: {negative} ({percent(negative)})")
+        st.text(f"Neutral: {neutral} ({percent(neutral)})")
+
+        st.text(f"===== Overall Channel Engagement =====")
+        st.text(f"Total Views on {num_videos} videos: {total_views}")
+        st.text(f"Total Likes on {num_videos} videos: {total_likes}")
 
 if __name__ == "__main__":
     main()
