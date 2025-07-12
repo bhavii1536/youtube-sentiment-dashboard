@@ -10,6 +10,16 @@ import traceback
 API_KEY = st.secrets["YOUTUBE_API_KEY"]
 youtube = build('youtube', 'v3', developerKey=API_KEY)
 
+def get_channel_name(channel_id):
+    try:
+        res = youtube.channels().list(
+            part='snippet',
+            id=channel_id
+        ).execute()
+        return res['items'][0]['snippet']['title'] if res['items'] else "Unknown Channel"
+    except:
+        return "Unknown Channel"
+
 def get_video_ids(channel_id):
     video_ids = []
     next_page_token = None
@@ -21,7 +31,7 @@ def get_video_ids(channel_id):
                 maxResults=50,
                 pageToken=next_page_token,
                 type='video',
-                order='date'  # get latest videos first
+                order='date'
             ).execute()
 
             for item in res['items']:
@@ -71,9 +81,9 @@ def analyze_sentiment(text):
 
 def plot_sentiment_chart(sentiment_counts, chart_type):
     colors = {
-        'Positive': 'rgba(74, 144, 226, 0.9)',   # Deep Blue
-        'Negative': 'rgba(255, 111, 97, 0.9)',   # Coral Red
-        'Neutral': 'rgba(169, 204, 227, 0.9)'    # Light Sky Blue
+        'Positive': '#6BCB77',   # Pastel green
+        'Negative': '#FF6B6B',   # Coral red
+        'Neutral': '#A0AEC0'     # Cool gray-blue
     }
 
     df = sentiment_counts.reset_index()
@@ -130,9 +140,12 @@ def plot_sentiment_chart(sentiment_counts, chart_type):
 def main():
     st.title("📊 YouTube Sentiment & Engagement Dashboard")
 
-    channel_id = st.text_input("Enter YouTube Channel ID (e.g. UCrU8kmBIid8IBg):")
+    channel_id = st.text_input("Enter YouTube Channel ID (e.g. UC_x5XG1OV2P6uZZ5FSM9Ttw):")
 
     if channel_id:
+        channel_name = get_channel_name(channel_id)
+        st.subheader(f"📺 Channel: {channel_name}")
+
         st.info("Fetching videos and comments, please wait...")
         video_ids = get_video_ids(channel_id)
 
@@ -141,7 +154,6 @@ def main():
             return
 
         num_videos = st.slider("Number of videos to analyze", 1, min(50, len(video_ids)), 10)
-
         video_ids = video_ids[:num_videos]
 
         final_data = []
@@ -167,8 +179,7 @@ def main():
         fig = plot_sentiment_chart(sentiment_counts, chart_type)
         st.plotly_chart(fig, use_container_width=True)
 
-        # Engagement stats placeholders (you can extend to get views/likes)
-        st.write("📺 Overall Engagement")
+        st.write("📊 Overall Engagement")
         st.write(f"👁️ Total Videos Analyzed: {num_videos}")
 
 if __name__ == "__main__":
