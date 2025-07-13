@@ -1,131 +1,146 @@
 import streamlit as st
-from googleapiclient.discovery import build
 import pandas as pd
+import numpy as np
+import requests
 from textblob import TextBlob
-import time
+import matplotlib.pyplot as plt
+import plotly.express as px
+from datetime import datetime
+from collections import defaultdict
+from googleapiclient.discovery import build
 
-# ⛓️ Setup API Key from secrets
-api_key = st.secrets["YOUTUBE_API_KEY"]
+# Your YouTube API Key here
+API_KEY = st.secrets["YOUTUBE_API_KEY"]  # <-- Replace this with your own API key
+YOUTUBE_API_SERVICE_NAME = 'youtube'
+YOUTUBE_API_VERSION = 'v3'
 
-# 🔌 Connect to YouTube API
-youtube = build('youtube', 'v3', developerKey=api_key)
+# Initialize YouTube API
+youtube = build(YOUTUBE_API_SERVICE_NAME, YOUTUBE_API_VERSION, developerKey=API_KEY)
 
-# 📦 Get channel info
-def get_channel_stats(youtube, channel_id):
-    request = youtube.channels().list(
-        part="snippet,contentDetails,statistics",
-        id=channel_id
-    )
-    response = request.execute()
-    
-    if 'items' not in response or not response['items']:
-        return None  # Handle invalid channel ID
-    
-    data = dict(
-        Channel_Name = response['items'][0]['snippet']['title'],
-        Subscribers = int(response['items'][0]['statistics'].get('subscriberCount', 0)),
-        Views = int(response['items'][0]['statistics'].get('viewCount', 0)),
-        Total_Videos = int(response['items'][0]['statistics'].get('videoCount', 0)),
-        Playlist_ID = response['items'][0]['contentDetails']['relatedPlaylists']['uploads']
-    )
-    return data
+# Streamlit app
+st.title("📊 YouTube Channel Insights + Sentiment Analysis")
 
-# 📹 Get video IDs from playlist
-def get_video_ids(youtube, playlist_id):
-    video_ids = []
-    next_page_token = None
-    while True:
-        request = youtube.playlistItems().list(
-            part="contentDetails",
-            playlistId=playlist_id,
-            maxResults=50,
-            pageToken=next_page_token
-        )
-        response = request.execute()
-        
-        for item in response['items']:
-            video_ids.append(item['contentDetails']['videoId'])
+# Input: YouTube Channel ID or username
+channel_id = st.text_input("Enter YouTube Channel ID:")
 
-        next_page_token = response.get('nextPageToken')
-        if not next_page_token:
-            break
+# Function to fetch video IDs (limit to 50 recent)
+def get_recent_video_ids(channel_id, max_results=50):
+    res = youtube.search().list(
+        part="snippet",
+        channelId=channel_id,
+        maxResults=max_results,
+        order="date",
+        type="video"
+    ).execute()
+    video_ids = [item['id']['videoId'] for item in res['items']]
     return video_ids
 
-# 🧠 Get video comments
-def get_comments(youtube, video_id):
+# Function to get comments for a video
+def get_comments(video_id):
     comments = []
     try:
-        request = youtube.commentThreads().list(
-            part="snippet",
+        response = youtube.commentThreads().list(
+            part='snippet',
             videoId=video_id,
             maxResults=50,
-            textFormat="plainText"
-        )
-        response = request.execute()
-        
-        for item in response['items']:
+            textFormat='plainText'
+        ).execute()
+
+        for item in response.get('items', []):
             comment = item['snippet']['topLevelComment']['snippet']['textDisplay']
             comments.append(comment)
-    except Exception as e:
-        pass  # If comments are disabled
+    except:
+        pass
     return comments
 
-# 💬 Analyze sentiments
+# Function to get video statistics
+def get_video_details(video_ids):
+    stats = []
+    for i in range(0, len(video_ids), 50):  # API allows 50 at a time
+        response = youtube.videos().list(
+            part='statistics,snippet',
+            id=','.join(video_ids[i:i+50])
+        ).execute()
+
+        for item in response['items']:
+            video_id = item['id']
+            title = item['snippet']['title']
+            published_at = item['snippet']['publishedAt']
+            views = int(item['statistics'].get('viewCount', 0))
+            likes = int(item['statistics'].get('likeCount', 0))
+            stats.append({
+                'video_id': video_id,
+                'title': title,
+                'published_at': published_at,
+                'views': views,
+                'likes': likes
+            })
+    return pd.DataFrame(stats)
+
+# Sentiment analyzer
 def analyze_sentiment(comments):
-    sentiments = []
+    sentiments = {"Positive": 0, "Neutral": 0, "Negative": 0}
     for comment in comments:
         blob = TextBlob(comment)
         polarity = blob.sentiment.polarity
         if polarity > 0:
-            sentiment = "Positive"
+            sentiments["Positive"] += 1
         elif polarity < 0:
-            sentiment = "Negative"
+            sentiments["Negative"] += 1
         else:
-            sentiment = "Neutral"
-        sentiments.append((comment, polarity, sentiment))
+            sentiments["Neutral"] += 1
     return sentiments
 
-# 🖼️ Streamlit UI
-st.set_page_config(page_title="YouTube Channel Analyzer", page_icon="📊")
-st.title("📊 YouTube Channel Analyzer")
-st.write("Enter a **channel username or channel ID** below:")
+# Month formatting function
+def extract_month(published_at):
+    return datetime.strptime(published_at, "%Y-%m-%dT%H:%M:%SZ").strftime('%B %Y')
 
-channel_id = st.text_input("🔍 Channel Name or ID", placeholder="UCBR8-60-B28hp2BmDPdntcQ")
-
+# Once Channel ID is entered
 if channel_id:
-    with st.spinner("Fetching channel data..."):
-        channel_info = get_channel_stats(youtube, channel_id)
-        if not channel_info:
-            st.error("❌ Invalid channel ID or no data found.")
-        else:
-            st.subheader("📌 Channel Info")
-            st.write(f"**Name:** {channel_info['Channel_Name']}")
-            st.write(f"**Subscribers:** {channel_info['Subscribers']:,}")
-            st.write(f"**Total Views:** {channel_info['Views']:,}")
-            st.write(f"**Total Videos:** {channel_info['Total_Videos']:,}")
+    st.info("Fetching data from YouTube...")
+    video_ids = get_recent_video_ids(channel_id)
+    video_data = get_video_details(video_ids)
 
-            st.subheader("📽️ Fetching Recent Videos...")
-            video_ids = get_video_ids(youtube, channel_info['Playlist_ID'])
+    # Total views and likes
+    total_views = video_data['views'].sum()
+    total_likes = video_data['likes'].sum()
 
-            if not video_ids:
-                st.warning("No videos found.")
-            else:
-                all_sentiments = []
-                for video_id in video_ids[:5]:  # Limit to first 5 videos for performance
-                    comments = get_comments(youtube, video_id)
-                    sentiments = analyze_sentiment(comments)
-                    all_sentiments.extend(sentiments)
-                    time.sleep(1)
+    st.success("✅ Data fetched successfully!")
 
-                if all_sentiments:
-                    st.subheader("💬 Sentiment Analysis Report")
-                    df = pd.DataFrame(all_sentiments, columns=["Comment", "Polarity", "Sentiment"])
-                    st.dataframe(df)
+    # Display total metrics
+    st.markdown(f"### 📺 Total Views (last 50 videos): `{total_views}`")
+    st.markdown(f"### 👍 Total Likes (last 50 videos): `{total_likes}`")
 
-                    # 📊 Summary count
-                    st.subheader("📈 Sentiment Summary")
-                    st.bar_chart(df["Sentiment"].value_counts())
+    # Sentiment analysis
+    all_comments = []
+    for vid in video_ids:
+        all_comments.extend(get_comments(vid))
 
-                else:
-                    st.info("No comments found for recent videos.")
+    sentiments = analyze_sentiment(all_comments)
 
+    # Pie chart of sentiment
+    st.markdown("## 🥧 Sentiment Analysis Summary")
+    fig_pie = px.pie(
+        names=list(sentiments.keys()),
+        values=list(sentiments.values()),
+        title="Sentiment Distribution",
+        color_discrete_sequence=px.colors.qualitative.Set3
+    )
+    st.plotly_chart(fig_pie)
+
+    # Line chart of views over months
+    video_data['month'] = video_data['published_at'].apply(extract_month)
+    monthly_views = video_data.groupby('month')['views'].sum().reset_index()
+
+    st.markdown("## 📈 Monthly Views (Last 50 Videos)")
+    fig_line = px.line(
+        monthly_views,
+        x='month',
+        y='views',
+        title='Views per Month',
+        markers=True,
+        labels={'month': 'Month', 'views': 'Total Views'},
+        line_shape='spline'
+    )
+    fig_line.update_layout(xaxis_tickangle=-45)
+    st.plotly_chart(fig_line)
