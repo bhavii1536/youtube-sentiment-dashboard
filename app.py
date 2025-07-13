@@ -10,7 +10,7 @@ from collections import defaultdict
 from googleapiclient.discovery import build
 
 # Your YouTube API Key here
-API_KEY = 'YOUR_YOUTUBE_API_KEY'  # <-- Replace this with your own API key
+API_KEY = st.secrets["YOUTUBE_API_KEY"]  # <-- Replace this with your own API key
 YOUTUBE_API_SERVICE_NAME = 'youtube'
 YOUTUBE_API_VERSION = 'v3'
 
