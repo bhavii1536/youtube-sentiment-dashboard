@@ -20,10 +20,10 @@ youtube = build(YOUTUBE_API_SERVICE_NAME, YOUTUBE_API_VERSION, developerKey=API_
 # Streamlit app
 st.title("📊 YouTube Channel Insights + Sentiment Analysis")
 
-# Input: YouTube Channel ID
+# Input: YouTube Channel ID or username
 channel_id = st.text_input("Enter YouTube Channel ID:")
 
-# Function to fetch recent video IDs
+# Function to fetch video IDs (limit to 50 recent)
 def get_recent_video_ids(channel_id, max_results=50):
     res = youtube.search().list(
         part="snippet",
@@ -53,7 +53,7 @@ def get_comments(video_id):
         pass
     return comments
 
-# Function to get video details
+# Function to get video statistics
 def get_video_details(video_ids):
     stats = []
     for i in range(0, len(video_ids), 50):  # API allows 50 at a time
@@ -77,7 +77,7 @@ def get_video_details(video_ids):
             })
     return pd.DataFrame(stats)
 
-# Sentiment analysis function
+# Sentiment analyzer
 def analyze_sentiment(comments):
     sentiments = {"Positive": 0, "Neutral": 0, "Negative": 0}
     for comment in comments:
@@ -91,21 +91,23 @@ def analyze_sentiment(comments):
             sentiments["Neutral"] += 1
     return sentiments
 
-# Format to short month name (e.g., Jan, Feb)
+# Month formatting function
 def extract_month(published_at):
-    return datetime.strptime(published_at, "%Y-%m-%dT%H:%M:%SZ").strftime('%b')
+    return datetime.strptime(published_at, "%Y-%m-%dT%H:%M:%SZ").strftime('%B %Y')
 
-# When Channel ID is entered
+# Once Channel ID is entered
 if channel_id:
     st.info("Fetching data from YouTube...")
     video_ids = get_recent_video_ids(channel_id)
     video_data = get_video_details(video_ids)
 
+    # Total views and likes
     total_views = video_data['views'].sum()
     total_likes = video_data['likes'].sum()
 
     st.success("✅ Data fetched successfully!")
 
+    # Display total metrics
     st.markdown(f"### 📺 Total Views (last 50 videos): `{total_views}`")
     st.markdown(f"### 👍 Total Likes (last 50 videos): `{total_likes}`")
 
@@ -116,6 +118,7 @@ if channel_id:
 
     sentiments = analyze_sentiment(all_comments)
 
+    # Pie chart of sentiment
     st.markdown("## 🥧 Sentiment Analysis Summary")
     fig_pie = px.pie(
         names=list(sentiments.keys()),
@@ -125,14 +128,9 @@ if channel_id:
     )
     st.plotly_chart(fig_pie)
 
-    # Monthly views chart
+    # Line chart of views over months
     video_data['month'] = video_data['published_at'].apply(extract_month)
-
-    # Ensure correct month order
-    month_order = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-                   'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
-
-    monthly_views = video_data.groupby('month')['views'].sum().reindex(month_order).dropna().reset_index()
+    monthly_views = video_data.groupby('month')['views'].sum().reset_index()
 
     st.markdown("## 📈 Monthly Views (Last 50 Videos)")
     fig_line = px.line(
@@ -144,5 +142,5 @@ if channel_id:
         labels={'month': 'Month', 'views': 'Total Views'},
         line_shape='spline'
     )
-    fig_line.update_layout(xaxis_tickangle=0)
+    fig_line.update_layout(xaxis_tickangle=-45)
     st.plotly_chart(fig_line)
