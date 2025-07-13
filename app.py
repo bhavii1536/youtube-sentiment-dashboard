@@ -9,8 +9,8 @@ from datetime import datetime
 from collections import defaultdict
 from googleapiclient.discovery import build
 
-# Your YouTube API Key here
-API_KEY = st.secrets["YOUTUBE_API_KEY"]  # <-- Replace this with your own API key
+# Load API Key from secrets
+API_KEY = st.secrets["YOUTUBE_API_KEY"]
 YOUTUBE_API_SERVICE_NAME = 'youtube'
 YOUTUBE_API_VERSION = 'v3'
 
@@ -20,7 +20,7 @@ youtube = build(YOUTUBE_API_SERVICE_NAME, YOUTUBE_API_VERSION, developerKey=API_
 # Streamlit app
 st.title("📊 YouTube Channel Insights + Sentiment Analysis")
 
-# Input: YouTube Channel ID or username
+# Input: YouTube Channel ID
 channel_id = st.text_input("Enter YouTube Channel ID:")
 
 # Function to fetch video IDs (limit to 50 recent)
@@ -56,7 +56,7 @@ def get_comments(video_id):
 # Function to get video statistics
 def get_video_details(video_ids):
     stats = []
-    for i in range(0, len(video_ids), 50):  # API allows 50 at a time
+    for i in range(0, len(video_ids), 50):
         response = youtube.videos().list(
             part='statistics,snippet',
             id=','.join(video_ids[i:i+50])
@@ -91,56 +91,66 @@ def analyze_sentiment(comments):
             sentiments["Neutral"] += 1
     return sentiments
 
-# Month formatting function
+# Month formatting function (Short month only)
 def extract_month(published_at):
-    return datetime.strptime(published_at, "%Y-%m-%dT%H:%M:%SZ").strftime('%B %Y')
+    return datetime.strptime(published_at, "%Y-%m-%dT%H:%M:%SZ").strftime('%b')
 
-# Once Channel ID is entered
+# Main logic
 if channel_id:
     st.info("Fetching data from YouTube...")
-    video_ids = get_recent_video_ids(channel_id)
-    video_data = get_video_details(video_ids)
+    try:
+        video_ids = get_recent_video_ids(channel_id)
+        video_data = get_video_details(video_ids)
 
-    # Total views and likes
-    total_views = video_data['views'].sum()
-    total_likes = video_data['likes'].sum()
+        # Total views and likes
+        total_views = video_data['views'].sum()
+        total_likes = video_data['likes'].sum()
 
-    st.success("✅ Data fetched successfully!")
+        st.success("✅ Data fetched successfully!")
 
-    # Display total metrics
-    st.markdown(f"### 📺 Total Views (last 50 videos): `{total_views}`")
-    st.markdown(f"### 👍 Total Likes (last 50 videos): `{total_likes}`")
+        # Display total metrics
+        st.markdown(f"### 📺 Total Views (last 50 videos): `{total_views}`")
+        st.markdown(f"### 👍 Total Likes (last 50 videos): `{total_likes}`")
 
-    # Sentiment analysis
-    all_comments = []
-    for vid in video_ids:
-        all_comments.extend(get_comments(vid))
+        # Sentiment analysis
+        all_comments = []
+        for vid in video_ids:
+            all_comments.extend(get_comments(vid))
 
-    sentiments = analyze_sentiment(all_comments)
+        sentiments = analyze_sentiment(all_comments)
 
-    # Pie chart of sentiment
-    st.markdown("## 🥧 Sentiment Analysis Summary")
-    fig_pie = px.pie(
-        names=list(sentiments.keys()),
-        values=list(sentiments.values()),
-        title="Sentiment Distribution",
-        color_discrete_sequence=px.colors.qualitative.Set3
-    )
-    st.plotly_chart(fig_pie)
+        # Pie chart of sentiment
+        st.markdown("## 🥧 Sentiment Analysis Summary")
+        fig_pie = px.pie(
+            names=list(sentiments.keys()),
+            values=list(sentiments.values()),
+            title="Sentiment Distribution",
+            color_discrete_sequence=px.colors.qualitative.Set3
+        )
+        st.plotly_chart(fig_pie)
 
-    # Line chart of views over months
-    video_data['month'] = video_data['published_at'].apply(extract_month)
-    monthly_views = video_data.groupby('month')['views'].sum().reset_index()
+        # Line chart of views over months
+        video_data['month'] = video_data['published_at'].apply(extract_month)
+        monthly_views = video_data.groupby('month')['views'].sum().reset_index()
 
-    st.markdown("## 📈 Monthly Views (Last 50 Videos)")
-    fig_line = px.line(
-        monthly_views,
-        x='month',
-        y='views',
-        title='Views per Month',
-        markers=True,
-        labels={'month': 'Month', 'views': 'Total Views'},
-        line_shape='spline'
-    )
-    fig_line.update_layout(xaxis_tickangle=-45)
-    st.plotly_chart(fig_line)
+        # Ensure month order (Jan–Dec)
+        month_order = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+                       'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+        monthly_views['month'] = pd.Categorical(monthly_views['month'], categories=month_order, ordered=True)
+        monthly_views = monthly_views.sort_values('month')
+
+        st.markdown("## 📈 Monthly Views (Last 50 Videos)")
+        fig_line = px.line(
+            monthly_views,
+            x='month',
+            y='views',
+            title='Views per Month',
+            markers=True,
+            labels={'month': 'Month', 'views': 'Total Views'},
+            line_shape='spline'
+        )
+        fig_line.update_layout(xaxis_tickangle=-45)
+        st.plotly_chart(fig_line)
+
+    except Exception as e:
+        st.error(f"❌ Error fetching data: {e}")
