@@ -19,15 +19,14 @@ YOUTUBE_API_VERSION = 'v3'
 # Initialize YouTube API
 youtube = build(YOUTUBE_API_SERVICE_NAME, YOUTUBE_API_VERSION, developerKey=API_KEY)
 
-# Load CardiffNLP sentiment model
+# Load RoBERTa sentiment model
 @st.cache_resource
-def load_sentiment_model():
-    model_name = "cardiffnlp/twitter-roberta-base-sentiment"
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
-    model = AutoModelForSequenceClassification.from_pretrained(model_name)
+def load_roberta_model():
+    tokenizer = AutoTokenizer.from_pretrained("cardiffnlp/twitter-roberta-base-sentiment")
+    model = AutoModelForSequenceClassification.from_pretrained("cardiffnlp/twitter-roberta-base-sentiment")
     return tokenizer, model
 
-tokenizer, model = load_sentiment_model()
+tokenizer, model = load_roberta_model()
 
 # Streamlit App Title
 st.title("📊 YouTube Channel Insights + Sentiment Analysis")
@@ -96,7 +95,7 @@ def get_video_details(video_ids):
             })
     return pd.DataFrame(stats)
 
-# New Sentiment Analysis with Neutral
+# Sentiment Analysis using RoBERTa
 def analyze_sentiment(comments):
     sentiments = {"POSITIVE": 0, "NEGATIVE": 0, "NEUTRAL": 0}
     filtered_comments = [c for c in comments if len(c.strip()) > 5]
@@ -106,14 +105,18 @@ def analyze_sentiment(comments):
 
     labels_map = {0: "NEGATIVE", 1: "NEUTRAL", 2: "POSITIVE"}
 
-    for comment in filtered_comments[:300]:  # Limit for speed
-        inputs = tokenizer(comment, return_tensors="pt", truncation=True)
-        with torch.no_grad():
-            outputs = model(**inputs)
-            probs = F.softmax(outputs.logits, dim=-1)
-            label_id = torch.argmax(probs, dim=1).item()
-            sentiment = labels_map[label_id]
-            sentiments[sentiment] += 1
+    for comment in filtered_comments[:300]:  # limit to 300 comments
+        try:
+            inputs = tokenizer(comment, return_tensors="pt", truncation=True, max_length=512, padding="max_length")
+            with torch.no_grad():
+                outputs = model(**inputs)
+                probs = F.softmax(outputs.logits, dim=-1)
+                label_id = torch.argmax(probs, dim=1).item()
+                sentiment = labels_map[label_id]
+                sentiments[sentiment] += 1
+        except Exception as e:
+            st.warning(f"⚠️ Skipping one comment due to error: {e}")
+            continue
 
     return sentiments
 
@@ -143,11 +146,7 @@ if channel_id:
             all_comments.extend(get_comments(vid))
 
         sentiments = analyze_sentiment(all_comments)
-        sentiment_labels = {
-            "POSITIVE": "😊 Positive",
-            "NEGATIVE": "😡 Negative",
-            "NEUTRAL": "😐 Neutral"
-        }
+        sentiment_labels = {"POSITIVE": "😊 Positive", "NEGATIVE": "😡 Negative", "NEUTRAL": "😐 Neutral"}
         sentiment_display = [sentiment_labels.get(k, k) for k in sentiments.keys()]
 
         st.markdown("## 🥧 Sentiment Analysis Summary")
@@ -155,7 +154,7 @@ if channel_id:
             names=sentiment_display,
             values=list(sentiments.values()),
             title="Comment Sentiment Distribution",
-            color_discrete_sequence=px.colors.qualitative.Set2
+            color_discrete_sequence=px.colors.qualitative.Set3
         )
         st.plotly_chart(fig_pie)
 
