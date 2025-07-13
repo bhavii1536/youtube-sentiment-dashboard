@@ -30,7 +30,7 @@ def load_roberta_model():
 tokenizer, model = load_roberta_model()  # Load model and tokenizer
 
 # 🖥️ Streamlit App Title
-st.title("📊 YouTube Channel Insights + Sentiment Analysis")
+st.title("📊 YT Sentiment Insights")
 
 # ✍️ User inputs Channel ID
 channel_id = st.text_input("Enter YouTube Channel ID:")
