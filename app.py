@@ -1,146 +1,146 @@
 import streamlit as st
-import pandas as pd
-import numpy as np
-import requests
-from textblob import TextBlob
-import matplotlib.pyplot as plt
-import plotly.express as px
-from datetime import datetime
-from collections import defaultdict
 from googleapiclient.discovery import build
+import pandas as pd
+import matplotlib.pyplot as plt
+from textblob import TextBlob
+from datetime import datetime
+import calendar
 
-# Your YouTube API Key here
-API_KEY = st.secrets["YOUTUBE_API_KEY"]  # <-- Replace this with your own API key
-YOUTUBE_API_SERVICE_NAME = 'youtube'
-YOUTUBE_API_VERSION = 'v3'
+# Load API key securely from Streamlit secrets
+API_KEY = st.secrets["YOUTUBE_API_KEY"]
 
-# Initialize YouTube API
-youtube = build(YOUTUBE_API_SERVICE_NAME, YOUTUBE_API_VERSION, developerKey=API_KEY)
+# Set up YouTube API client
+youtube = build('youtube', 'v3', developerKey=API_KEY)
 
-# Streamlit app
-st.title("📊 YouTube Channel Insights + Sentiment Analysis")
+# Page config
+st.set_page_config(page_title="YouTube Channel Analyzer 💡", layout="wide")
 
-# Input: YouTube Channel ID or username
-channel_id = st.text_input("Enter YouTube Channel ID:")
+st.title("📺 YouTube Channel Analysis Dashboard")
 
-# Function to fetch video IDs (limit to 50 recent)
-def get_recent_video_ids(channel_id, max_results=50):
-    res = youtube.search().list(
-        part="snippet",
-        channelId=channel_id,
-        maxResults=max_results,
-        order="date",
-        type="video"
-    ).execute()
-    video_ids = [item['id']['videoId'] for item in res['items']]
-    return video_ids
+# Input field for channel ID
+channel_id = st.text_input("🔎 Enter YouTube Channel ID:")
 
-# Function to get comments for a video
-def get_comments(video_id):
-    comments = []
-    try:
-        response = youtube.commentThreads().list(
-            part='snippet',
-            videoId=video_id,
-            maxResults=50,
-            textFormat='plainText'
-        ).execute()
-
-        for item in response.get('items', []):
-            comment = item['snippet']['topLevelComment']['snippet']['textDisplay']
-            comments.append(comment)
-    except:
-        pass
-    return comments
-
-# Function to get video statistics
-def get_video_details(video_ids):
-    stats = []
-    for i in range(0, len(video_ids), 50):  # API allows 50 at a time
-        response = youtube.videos().list(
-            part='statistics,snippet',
-            id=','.join(video_ids[i:i+50])
-        ).execute()
-
-        for item in response['items']:
-            video_id = item['id']
-            title = item['snippet']['title']
-            published_at = item['snippet']['publishedAt']
-            views = int(item['statistics'].get('viewCount', 0))
-            likes = int(item['statistics'].get('likeCount', 0))
-            stats.append({
-                'video_id': video_id,
-                'title': title,
-                'published_at': published_at,
-                'views': views,
-                'likes': likes
-            })
-    return pd.DataFrame(stats)
-
-# Sentiment analyzer
-def analyze_sentiment(comments):
-    sentiments = {"Positive": 0, "Neutral": 0, "Negative": 0}
-    for comment in comments:
-        blob = TextBlob(comment)
-        polarity = blob.sentiment.polarity
-        if polarity > 0:
-            sentiments["Positive"] += 1
-        elif polarity < 0:
-            sentiments["Negative"] += 1
-        else:
-            sentiments["Neutral"] += 1
-    return sentiments
-
-# Month formatting function
-def extract_month(published_at):
-    return datetime.strptime(published_at, "%Y-%m-%dT%H:%M:%SZ").strftime('%B %Y')
-
-# Once Channel ID is entered
 if channel_id:
-    st.info("Fetching data from YouTube...")
-    video_ids = get_recent_video_ids(channel_id)
-    video_data = get_video_details(video_ids)
+    # Function to get uploads playlist ID
+    def get_uploads_playlist_id(channel_id):
+        response = youtube.channels().list(
+            part='contentDetails',
+            id=channel_id
+        ).execute()
+        return response['items'][0]['contentDetails']['relatedPlaylists']['uploads']
 
-    # Total views and likes
-    total_views = video_data['views'].sum()
-    total_likes = video_data['likes'].sum()
+    # Get video IDs from uploads playlist
+    def get_video_ids(playlist_id, max_videos=50):
+        video_ids = []
+        next_page_token = None
+        while len(video_ids) < max_videos:
+            res = youtube.playlistItems().list(
+                part='snippet',
+                playlistId=playlist_id,
+                maxResults=50,
+                pageToken=next_page_token
+            ).execute()
+            for item in res['items']:
+                video_ids.append(item['snippet']['resourceId']['videoId'])
+                if len(video_ids) >= max_videos:
+                    break
+            next_page_token = res.get('nextPageToken')
+            if not next_page_token:
+                break
+        return video_ids
 
-    st.success("✅ Data fetched successfully!")
+    # Get video statistics and comments
+    def get_video_stats_and_comments(video_ids):
+        stats_list = []
+        sentiment_scores = {'Positive': 0, 'Negative': 0, 'Neutral': 0}
+        for vid in video_ids:
+            response = youtube.videos().list(
+                part='snippet,statistics',
+                id=vid
+            ).execute()
 
-    # Display total metrics
-    st.markdown(f"### 📺 Total Views (last 50 videos): `{total_views}`")
-    st.markdown(f"### 👍 Total Likes (last 50 videos): `{total_likes}`")
+            item = response['items'][0]
+            snippet = item['snippet']
+            stats = item['statistics']
 
-    # Sentiment analysis
-    all_comments = []
-    for vid in video_ids:
-        all_comments.extend(get_comments(vid))
+            published_at = snippet['publishedAt']
+            view_count = int(stats.get('viewCount', 0))
+            like_count = int(stats.get('likeCount', 0))
 
-    sentiments = analyze_sentiment(all_comments)
+            # Comments
+            try:
+                comments_res = youtube.commentThreads().list(
+                    part='snippet',
+                    videoId=vid,
+                    maxResults=20,
+                    textFormat="plainText"
+                ).execute()
 
-    # Pie chart of sentiment
-    st.markdown("## 🥧 Sentiment Analysis Summary")
-    fig_pie = px.pie(
-        names=list(sentiments.keys()),
-        values=list(sentiments.values()),
-        title="Sentiment Distribution",
-        color_discrete_sequence=px.colors.qualitative.Set3
-    )
-    st.plotly_chart(fig_pie)
+                for comment in comments_res['items']:
+                    text = comment['snippet']['topLevelComment']['snippet']['textDisplay']
+                    analysis = TextBlob(text)
+                    polarity = analysis.sentiment.polarity
+                    if polarity > 0:
+                        sentiment_scores['Positive'] += 1
+                    elif polarity < 0:
+                        sentiment_scores['Negative'] += 1
+                    else:
+                        sentiment_scores['Neutral'] += 1
+            except:
+                pass
 
-    # Line chart of views over months
-    video_data['month'] = video_data['published_at'].apply(extract_month)
-    monthly_views = video_data.groupby('month')['views'].sum().reset_index()
+            stats_list.append({
+                'Video ID': vid,
+                'Published At': published_at,
+                'Views': view_count,
+                'Likes': like_count
+            })
+        return stats_list, sentiment_scores
 
-    st.markdown("## 📈 Monthly Views (Last 50 Videos)")
-    fig_line = px.line(
-        monthly_views,
-        x='month',
-        y='views',
-        title='Views per Month',
-        markers=True,
-        labels={'month': 'Month', 'views': 'Total Views'},
-        line_shape='spline'
-    )
-    fig_line.update_layout(xaxis_tickangle=-45)
-    st.plotly_chart(fig_line)
+    try:
+        playlist_id = get_uploads_playlist_id(channel_id)
+        video_ids = get_video_ids(playlist_id)
+        stats, sentiments = get_video_stats_and_comments(video_ids)
+
+        df = pd.DataFrame(stats)
+        df['Published At'] = pd.to_datetime(df['Published At'])
+        df['Month'] = df['Published At'].dt.month
+        df['Month Name'] = df['Month'].apply(lambda x: calendar.month_abbr[x])
+
+        # Group by month
+        monthly_views = df.groupby('Month Name')['Views'].sum().reindex(
+            ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+             'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']).dropna()
+
+        st.markdown("### 📊 Monthly Views Overview")
+        fig, ax = plt.subplots(figsize=(10, 4))
+        monthly_views.plot(kind='line', marker='o', color='green', ax=ax)
+        ax.set_xlabel("Month")
+        ax.set_ylabel("Total Views")
+        ax.set_title("Views per Month 📈")
+        ax.grid(True)
+        st.pyplot(fig)
+
+        st.markdown("### 💬 Sentiment Analysis (from recent comments)")
+        sentiment_labels = list(sentiments.keys())
+        sentiment_values = list(sentiments.values())
+
+        pie_colors = ['#2ecc71', '#e74c3c', '#f1c40f']
+        fig2, ax2 = plt.subplots()
+        ax2.pie(sentiment_values, labels=sentiment_labels, autopct='%1.1f%%', colors=pie_colors, startangle=140)
+        ax2.axis('equal')
+        st.pyplot(fig2)
+
+        st.markdown("### 📌 Summary Metrics")
+        total_views = df['Views'].sum()
+        total_likes = df['Likes'].sum()
+
+        col1, col2 = st.columns(2)
+        col1.metric("👍 Total Likes", f"{total_likes:,}")
+        col2.metric("👁️ Total Views", f"{total_views:,}")
+
+        with st.expander("📄 Raw Data Table (Latest 50 Videos)"):
+            st.dataframe(df[['Video ID', 'Published At', 'Views', 'Likes']])
+
+    except Exception as e:
+        st.error(f"Something went wrong! 😢\n\n{str(e)}")
