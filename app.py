@@ -1,21 +1,23 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 import requests
 from textblob import TextBlob
+import matplotlib.pyplot as plt
 import plotly.express as px
 from datetime import datetime
+from collections import defaultdict
 from googleapiclient.discovery import build
 
-# Use API key from secrets
-API_KEY = st.secrets["YOUTUBE_API_KEY"]
+# Your YouTube API Key here
+API_KEY = 'YOUR_YOUTUBE_API_KEY'  # <-- Replace this with your own API key
 YOUTUBE_API_SERVICE_NAME = 'youtube'
 YOUTUBE_API_VERSION = 'v3'
 
 # Initialize YouTube API
 youtube = build(YOUTUBE_API_SERVICE_NAME, YOUTUBE_API_VERSION, developerKey=API_KEY)
 
-# Streamlit page setup
-st.set_page_config(layout="wide")
+# Streamlit app
 st.title("📊 YouTube Channel Insights + Sentiment Analysis")
 
 # Input: YouTube Channel ID
@@ -33,7 +35,7 @@ def get_recent_video_ids(channel_id, max_results=50):
     video_ids = [item['id']['videoId'] for item in res['items']]
     return video_ids
 
-# Get comments
+# Function to get comments for a video
 def get_comments(video_id):
     comments = []
     try:
@@ -51,10 +53,10 @@ def get_comments(video_id):
         pass
     return comments
 
-# Get video details
+# Function to get video details
 def get_video_details(video_ids):
     stats = []
-    for i in range(0, len(video_ids), 50):
+    for i in range(0, len(video_ids), 50):  # API allows 50 at a time
         response = youtube.videos().list(
             part='statistics,snippet',
             id=','.join(video_ids[i:i+50])
@@ -75,7 +77,7 @@ def get_video_details(video_ids):
             })
     return pd.DataFrame(stats)
 
-# Sentiment analyzer
+# Sentiment analysis function
 def analyze_sentiment(comments):
     sentiments = {"Positive": 0, "Neutral": 0, "Negative": 0}
     for comment in comments:
@@ -89,11 +91,11 @@ def analyze_sentiment(comments):
             sentiments["Neutral"] += 1
     return sentiments
 
-# Extract short month name
+# Format to short month name (e.g., Jan, Feb)
 def extract_month(published_at):
     return datetime.strptime(published_at, "%Y-%m-%dT%H:%M:%SZ").strftime('%b')
 
-# When channel ID is entered
+# When Channel ID is entered
 if channel_id:
     st.info("Fetching data from YouTube...")
     video_ids = get_recent_video_ids(channel_id)
@@ -107,13 +109,13 @@ if channel_id:
     st.markdown(f"### 📺 Total Views (last 50 videos): `{total_views}`")
     st.markdown(f"### 👍 Total Likes (last 50 videos): `{total_likes}`")
 
+    # Sentiment analysis
     all_comments = []
     for vid in video_ids:
         all_comments.extend(get_comments(vid))
 
     sentiments = analyze_sentiment(all_comments)
 
-    # Pie Chart
     st.markdown("## 🥧 Sentiment Analysis Summary")
     fig_pie = px.pie(
         names=list(sentiments.keys()),
@@ -123,10 +125,13 @@ if channel_id:
     )
     st.plotly_chart(fig_pie)
 
-    # Line chart for month-wise views
+    # Monthly views chart
     video_data['month'] = video_data['published_at'].apply(extract_month)
+
+    # Ensure correct month order
     month_order = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
                    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+
     monthly_views = video_data.groupby('month')['views'].sum().reindex(month_order).dropna().reset_index()
 
     st.markdown("## 📈 Monthly Views (Last 50 Videos)")
@@ -139,10 +144,5 @@ if channel_id:
         labels={'month': 'Month', 'views': 'Total Views'},
         line_shape='spline'
     )
-    fig_line.update_layout(
-        xaxis_tickangle=0,
-        xaxis=dict(tickmode='linear'),
-        height=400,
-        margin=dict(l=20, r=20, t=40, b=20)
-    )
-    st.plotly_chart(fig_line, use_container_width=True)
+    fig_line.update_layout(xaxis_tickangle=0)
+    st.plotly_chart(fig_line)
