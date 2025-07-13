@@ -30,7 +30,7 @@ def load_sentiment_model():
 tokenizer, model = load_sentiment_model()
 
 # Streamlit App Title
-st.title("📊 YouTube Channel Insights + Sentiment Analysis (w/ Neutral)")
+st.title("📊 YouTube Channel Insights + Sentiment Analysis")
 
 # Input: YouTube Channel ID
 channel_id = st.text_input("Enter YouTube Channel ID:")
