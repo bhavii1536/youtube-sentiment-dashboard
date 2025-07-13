@@ -1,4 +1,3 @@
-# 📦 Importing all required libraries
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -6,185 +5,169 @@ import requests
 import matplotlib.pyplot as plt
 import plotly.express as px
 from datetime import datetime
-from collections import defaultdict
 from googleapiclient.discovery import build
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
 import torch
 import torch.nn.functional as F
 
-# 🔑 Load API Key securely from Streamlit secrets
-API_KEY = st.secrets["YOUTUBE_API_KEY"]  # Your YouTube API key from secrets
+# 🔐 Load API Key securely
+API_KEY = st.secrets["YOUTUBE_API_KEY"]
 
-# 🔧 YouTube API service initialization
-YOUTUBE_API_SERVICE_NAME = 'youtube'
-YOUTUBE_API_VERSION = 'v3'
-youtube = build(YOUTUBE_API_SERVICE_NAME, YOUTUBE_API_VERSION, developerKey=API_KEY)
+# Initialize YouTube API
+youtube = build('youtube', 'v3', developerKey=API_KEY)
 
-# 🧠 Load RoBERTa model & tokenizer only once to speed up performance
+# Load RoBERTa model & tokenizer
 @st.cache_resource
-def load_roberta_model():
-    tokenizer = AutoTokenizer.from_pretrained("cardiffnlp/twitter-roberta-base-sentiment")  # Tokenizer for input
-    model = AutoModelForSequenceClassification.from_pretrained("cardiffnlp/twitter-roberta-base-sentiment")  # Pretrained sentiment model
+def load_model():
+    tokenizer = AutoTokenizer.from_pretrained("cardiffnlp/twitter-roberta-base-sentiment")
+    model = AutoModelForSequenceClassification.from_pretrained("cardiffnlp/twitter-roberta-base-sentiment")
     return tokenizer, model
 
-tokenizer, model = load_roberta_model()  # Load model and tokenizer
+tokenizer, model = load_model()
 
-# 🖥️ Streamlit App Title
-st.title("📊 YT Sentiment Insights")
+# Title
+st.title("📊 YouTube Sentiment Insights")
 
-# ✍️ User inputs Channel ID
+# Input Channel ID
 channel_id = st.text_input("Enter YouTube Channel ID:")
 
-# 🔍 Get channel name using the ID
-def get_channel_name(channel_id):
+# Fetch Channel Name
+def get_channel_name(cid):
     try:
-        response = youtube.channels().list(part="snippet", id=channel_id).execute()
-        return response['items'][0]['snippet']['title']  # Extract channel title
+        data = youtube.channels().list(part="snippet", id=cid).execute()
+        return data['items'][0]['snippet']['title']
     except:
         return "Unknown Channel"
 
-# 🎞️ Get recent video IDs (up to 50) from the channel
-def get_recent_video_ids(channel_id, max_results=50):
+# Fetch Video IDs
+def get_video_ids(cid, max_results=50):
     res = youtube.search().list(
         part="snippet",
-        channelId=channel_id,
+        channelId=cid,
         maxResults=max_results,
         order="date",
         type="video"
     ).execute()
-    return [item['id']['videoId'] for item in res['items']]  # Extract video IDs
+    return [item['id']['videoId'] for item in res['items']]
 
-# 💬 Get top-level comments from a video
-def get_comments(video_id):
+# Fetch Comments
+def get_comments(vid):
     comments = []
     try:
-        response = youtube.commentThreads().list(
-            part='snippet',
-            videoId=video_id,
+        res = youtube.commentThreads().list(
+            part="snippet",
+            videoId=vid,
             maxResults=50,
-            textFormat='plainText'
+            textFormat="plainText"
         ).execute()
-        for item in response.get('items', []):
+        for item in res['items']:
             comment = item['snippet']['topLevelComment']['snippet']['textDisplay']
-            comments.append(comment)  # Add each comment to the list
+            comments.append(comment)
     except:
         pass
     return comments
 
-# 📊 Get video details like title, views, likes
+# Get video stats
 def get_video_details(video_ids):
     stats = []
     for i in range(0, len(video_ids), 50):
-        response = youtube.videos().list(
+        res = youtube.videos().list(
             part='statistics,snippet',
             id=','.join(video_ids[i:i+50])
         ).execute()
-
-        for item in response['items']:
-            video_id = item['id']
-            title = item['snippet']['title']
-            published_at = item['snippet']['publishedAt']
-            views = int(item['statistics'].get('viewCount', 0))
-            likes = int(item['statistics'].get('likeCount', 0))
+        for item in res['items']:
             stats.append({
-                'video_id': video_id,
-                'title': title,
-                'published_at': published_at,
-                'views': views,
-                'likes': likes
+                'video_id': item['id'],
+                'title': item['snippet']['title'],
+                'published_at': item['snippet']['publishedAt'],
+                'views': int(item['statistics'].get('viewCount', 0)),
+                'likes': int(item['statistics'].get('likeCount', 0))
             })
-    return pd.DataFrame(stats)  # Return as a DataFrame
+    return pd.DataFrame(stats)
 
-# 🤖 Analyze sentiment of comments using RoBERTa
+# Sentiment analysis
 def analyze_sentiment(comments):
-    sentiments = {"POSITIVE": 0, "NEGATIVE": 0, "NEUTRAL": 0}  # Initialize counters
-    filtered_comments = [c for c in comments if len(c.strip()) > 5]  # Skip tiny comments
+    results = {"POSITIVE": 0, "NEUTRAL": 0, "NEGATIVE": 0}
+    filtered = [c for c in comments if len(c.strip()) > 5]
+    label_map = {0: "NEGATIVE", 1: "NEUTRAL", 2: "POSITIVE"}
 
-    if not filtered_comments:
-        return sentiments
-
-    labels_map = {0: "NEGATIVE", 1: "NEUTRAL", 2: "POSITIVE"}  # Index to label map
-
-    for comment in filtered_comments[:300]:  # Limit to 300 for speed
+    for comment in filtered[:300]:
         try:
-            inputs = tokenizer(comment, return_tensors="pt", truncation=True, max_length=512, padding="max_length")
+            inputs = tokenizer(comment, return_tensors="pt", truncation=True, padding="max_length", max_length=512)
             with torch.no_grad():
-                outputs = model(**inputs)
-                probs = F.softmax(outputs.logits, dim=-1)
-                label_id = torch.argmax(probs, dim=1).item()  # Get the predicted label
-                sentiment = labels_map[label_id]
-                sentiments[sentiment] += 1  # Increment count
-        except Exception as e:
-            st.warning(f"⚠ Skipping one comment due to error: {e}")
+                output = model(**inputs)
+                probs = F.softmax(output.logits, dim=1)
+                label_id = torch.argmax(probs).item()
+                sentiment = label_map[label_id]
+                results[sentiment] += 1
+        except:
             continue
+    return results
 
-    return sentiments
+# Month extractor
+def extract_month(date_str):
+    return datetime.strptime(date_str, "%Y-%m-%dT%H:%M:%SZ").strftime('%b')
 
-# 📅 Extract the month from published date
-def extract_month(published_at):
-    return datetime.strptime(published_at, "%Y-%m-%dT%H:%M:%SZ").strftime('%b')
-
-# 🚀 Main Streamlit logic
+# MAIN LOGIC
 if channel_id:
-    st.info("🔄 Fetching data from YouTube...")  # Let user know it's loading
+    st.info("🔄 Fetching data...")
+
     try:
-        channel_name = get_channel_name(channel_id)  # Get channel title
-        st.markdown(f"## 📺 Channel: {channel_name}")
+        channel_name = get_channel_name(channel_id)
+        st.subheader(f"📺 Channel: {channel_name}")
 
-        video_ids = get_recent_video_ids(channel_id)  # Get recent videos
-        video_data = get_video_details(video_ids)  # Get their stats
+        video_ids = get_video_ids(channel_id)
+        video_df = get_video_details(video_ids)
 
-        total_views = video_data['views'].sum()  # Sum of views
-        total_likes = video_data['likes'].sum()  # Sum of likes
+        total_views = video_df['views'].sum()
+        total_likes = video_df['likes'].sum()
 
-        st.success("✅ Data fetched successfully!")
-        st.markdown(f"### 👀 Total Views (last 50 videos): {total_views}")
-        st.markdown(f"### ❤️ Total Likes (last 50 videos): {total_likes}")
+        st.markdown(f"**👀 Total Views (Last 50 videos):** `{total_views}`")
+        st.markdown(f"**❤️ Total Likes (Last 50 videos):** `{total_likes}`")
 
+        # Comments & Sentiment
         all_comments = []
         for vid in video_ids:
-            all_comments.extend(get_comments(vid))  # Combine all comments
+            all_comments.extend(get_comments(vid))
 
-        sentiments = analyze_sentiment(all_comments)  # Run sentiment analysis
-        sentiment_labels = {"POSITIVE": "😊 Positive", "NEGATIVE": "😡 Negative", "NEUTRAL": "😐 Neutral"}
+        sentiment_result = analyze_sentiment(all_comments)
+        label_map = {
+            "POSITIVE": "😊 Positive",
+            "NEUTRAL": "😐 Neutral",
+            "NEGATIVE": "😡 Negative"
+        }
 
-        # 🥧 Pie chart: Sentiment Distribution (with color swap)
-        st.markdown("## 🔍 Sentiment Analysis Summary")
-        fig_pie = px.pie(
-            names=[sentiment_labels[k] for k in sentiments.keys()],
-            values=list(sentiments.values()),
-            title="Comment Sentiment Distribution",
-            color=[sentiment_labels[k] for k in sentiments.keys()],
+        st.subheader("🔍 Sentiment Distribution")
+
+        pie = px.pie(
+            names=[label_map[k] for k in sentiment_result],
+            values=list(sentiment_result.values()),
+            color=[label_map[k] for k in sentiment_result],
             color_discrete_map={
-                "😊 Positive": "#80B1D3",  # Changed to blue
-                "😡 Negative": "#FB8072",  # Red stays same
-                "😐 Neutral": "#FDB462"   # Changed to orage
-            }
+                "😊 Positive": "#80B1D3",
+                "😐 Neutral": "#FDB462",
+                "😡 Negative": "#FB8072"
+            },
+            title="Comment Sentiment"
         )
-        st.plotly_chart(fig_pie)  # Show pie chart
+        st.plotly_chart(pie)
 
-        # 📈 Line chart: Monthly views
-        video_data['month'] = video_data['published_at'].apply(extract_month)  # Get month
-        monthly_views = video_data.groupby('month')['views'].sum().reset_index()
+        # Monthly Views
+        st.subheader("📈 Monthly Views")
 
-        # 📅 Sort months in order
-        month_order = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-                       'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
-        monthly_views['month'] = pd.Categorical(monthly_views['month'], categories=month_order, ordered=True)
-        monthly_views = monthly_views.sort_values('month')
+        video_df['month'] = video_df['published_at'].apply(extract_month)
+        month_order = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
+        video_df['month'] = pd.Categorical(video_df['month'], categories=month_order, ordered=True)
+        monthly_views = video_df.groupby('month')['views'].sum().reset_index().sort_values('month')
 
-        st.markdown("## 📈 Monthly Views (Last 50 Videos)")
-        fig_line = px.line(
+        line = px.line(
             monthly_views,
             x='month',
             y='views',
-            title='Monthly Views Overview',
             markers=True,
-            labels={'month': 'Month', 'views': 'Total Views'},
-            line_shape='spline'
+            title="Monthly Views Overview"
         )
-        fig_line.update_layout(xaxis_tickangle=-45)
-        st.plotly_chart(fig_line)  # Show line chart
+        st.plotly_chart(line)
 
     except Exception as e:
-        st.error(f"❌ Error fetching data: {e}")  # Show error if any
+        st.error(f"❌ Error: {e}")
