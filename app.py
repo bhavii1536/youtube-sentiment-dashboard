@@ -138,8 +138,8 @@ if channel_id:
         total_likes = video_data['likes'].sum()  # Sum of likes
 
         st.success("✅ Data fetched successfully!")
-        st.markdown(f"### 👁 Total Views (last 50 videos): {total_views}")
-        st.markdown(f"### 👍 Total Likes (last 50 videos): {total_likes}")
+        st.markdown(f"### 👀 Total Views (last 50 videos): {total_views}")
+        st.markdown(f"### ❤️ Total Likes (last 50 videos): {total_likes}")
 
         all_comments = []
         for vid in video_ids:
