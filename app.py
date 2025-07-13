@@ -2,14 +2,14 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import requests
-from textblob import TextBlob
 import matplotlib.pyplot as plt
 import plotly.express as px
 from datetime import datetime
 from collections import defaultdict
 from googleapiclient.discovery import build
+from transformers import pipeline
 
-# Load API Key from secrets
+# Load API Key from Streamlit secrets
 API_KEY = st.secrets["YOUTUBE_API_KEY"]
 YOUTUBE_API_SERVICE_NAME = 'youtube'
 YOUTUBE_API_VERSION = 'v3'
@@ -17,24 +17,28 @@ YOUTUBE_API_VERSION = 'v3'
 # Initialize YouTube API
 youtube = build(YOUTUBE_API_SERVICE_NAME, YOUTUBE_API_VERSION, developerKey=API_KEY)
 
-# Streamlit app
+# Load Hugging Face sentiment analysis model (cached)
+@st.cache_resource
+def load_sentiment_model():
+    return pipeline("sentiment-analysis")
+
+sentiment_model = load_sentiment_model()
+
+# Streamlit App Title
 st.title("📊 YouTube Channel Insights + Sentiment Analysis")
 
 # Input: YouTube Channel ID
 channel_id = st.text_input("Enter YouTube Channel ID:")
 
-# Get channel name
+# Get Channel Name
 def get_channel_name(channel_id):
     try:
-        res = youtube.channels().list(
-            part="snippet",
-            id=channel_id
-        ).execute()
-        return res['items'][0]['snippet']['title']
+        response = youtube.channels().list(part="snippet", id=channel_id).execute()
+        return response['items'][0]['snippet']['title']
     except:
-        return None
+        return "Unknown Channel"
 
-# Fetch video IDs (limit 50 recent)
+# Get Recent Video IDs
 def get_recent_video_ids(channel_id, max_results=50):
     res = youtube.search().list(
         part="snippet",
@@ -43,10 +47,9 @@ def get_recent_video_ids(channel_id, max_results=50):
         order="date",
         type="video"
     ).execute()
-    video_ids = [item['id']['videoId'] for item in res['items']]
-    return video_ids
+    return [item['id']['videoId'] for item in res['items']]
 
-# Get comments for a video
+# Get Comments for a Video
 def get_comments(video_id):
     comments = []
     try:
@@ -64,7 +67,7 @@ def get_comments(video_id):
         pass
     return comments
 
-# Get video stats
+# Get Video Details
 def get_video_details(video_ids):
     stats = []
     for i in range(0, len(video_ids), 50):
@@ -88,72 +91,70 @@ def get_video_details(video_ids):
             })
     return pd.DataFrame(stats)
 
-# Sentiment analyzer
+# Sentiment Analysis using Hugging Face
 def analyze_sentiment(comments):
-    sentiments = {"Positive": 0, "Neutral": 0, "Negative": 0}
-    for comment in comments:
-        blob = TextBlob(comment)
-        polarity = blob.sentiment.polarity
-        if polarity > 0:
-            sentiments["Positive"] += 1
-        elif polarity < 0:
-            sentiments["Negative"] += 1
-        else:
-            sentiments["Neutral"] += 1
+    sentiments = {"POSITIVE": 0, "NEGATIVE": 0}
+    filtered_comments = [c for c in comments if len(c.strip()) > 5]
+    
+    if not filtered_comments:
+        return {"POSITIVE": 0, "NEGATIVE": 0}
+
+    results = sentiment_model(filtered_comments[:300])  # Limit to first 300 for speed
+    for result in results:
+        label = result['label'].upper()
+        if label in sentiments:
+            sentiments[label] += 1
     return sentiments
 
-# Month formatting
+# Extract Month Name
 def extract_month(published_at):
-    return datetime.strptime(published_at, "%Y-%m-%dT%H:%M:%SZ").strftime('%b')  # short month
+    return datetime.strptime(published_at, "%Y-%m-%dT%H:%M:%SZ").strftime('%b')
 
-# Main app logic
+# Main App Logic
 if channel_id:
-    st.info("Fetching data from YouTube...")
-
+    st.info("🔄 Fetching data from YouTube...")
     try:
+        # Channel Name
         channel_name = get_channel_name(channel_id)
+        st.markdown(f"## 📺 Channel: *{channel_name}*")
+
+        # Video IDs and Data
         video_ids = get_recent_video_ids(channel_id)
         video_data = get_video_details(video_ids)
 
-        # Show channel name
-        if channel_name:
-            st.subheader(f"📺 Channel: `{channel_name}`")
-
-        # Totals
+        # Total Views and Likes
         total_views = video_data['views'].sum()
         total_likes = video_data['likes'].sum()
 
         st.success("✅ Data fetched successfully!")
+        st.markdown(f"### 👁️ Total Views (last 50 videos): {total_views}")
+        st.markdown(f"### 👍 Total Likes (last 50 videos): {total_likes}")
 
-        st.markdown(f"### 👁️ Total Views (last 50 videos): `{total_views}`")
-        st.markdown(f"### 👍 Total Likes (last 50 videos): `{total_likes}`")
-
-        # Sentiment analysis
+        # Collect Comments
         all_comments = []
         for vid in video_ids:
             all_comments.extend(get_comments(vid))
 
+        # Sentiment Analysis
         sentiments = analyze_sentiment(all_comments)
+        sentiment_labels = {"POSITIVE": "😊 Positive", "NEGATIVE": "😡 Negative"}
+        sentiment_display = [sentiment_labels.get(k, k) for k in sentiments.keys()]
 
         st.markdown("## 🥧 Sentiment Analysis Summary")
         fig_pie = px.pie(
-            names=list(sentiments.keys()),
+            names=sentiment_display,
             values=list(sentiments.values()),
-            title="Sentiment Distribution",
-            color_discrete_sequence=px.colors.qualitative.Set3
+            title="Comment Sentiment Distribution (Hugging Face Model)",
+            color_discrete_sequence=px.colors.qualitative.Set2
         )
         st.plotly_chart(fig_pie)
 
-        # Chronological Monthly View Chart
+        # Monthly Views Chart
         video_data['month'] = video_data['published_at'].apply(extract_month)
-
-        # Define correct month order
+        monthly_views = video_data.groupby('month')['views'].sum().reset_index()
         month_order = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
                        'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
-
-        video_data['month'] = pd.Categorical(video_data['month'], categories=month_order, ordered=True)
-
-        monthly_views = video_data.groupby('month', observed=True)['views'].sum().reset_index()
+        monthly_views['month'] = pd.Categorical(monthly_views['month'], categories=month_order, ordered=True)
         monthly_views = monthly_views.sort_values('month')
 
         st.markdown("## 📈 Monthly Views (Last 50 Videos)")
@@ -161,7 +162,7 @@ if channel_id:
             monthly_views,
             x='month',
             y='views',
-            title='Monthly Views (Chronological)',
+            title='Monthly Views Overview',
             markers=True,
             labels={'month': 'Month', 'views': 'Total Views'},
             line_shape='spline'
