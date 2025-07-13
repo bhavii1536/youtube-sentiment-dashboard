@@ -6,3 +6,4 @@ vaderSentiment
 wordcloud
 matplotlib
 plotly
+textblob
