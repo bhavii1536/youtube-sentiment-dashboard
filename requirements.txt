@@ -1,3 +1,4 @@
+seaborn
 streamlit
 google-api-python-client
 pandas
