@@ -53,22 +53,31 @@ def get_recent_video_ids(channel_id, max_results=50):
     ).execute()
     return [item['id']['videoId'] for item in res['items']]
 
-# Get Comments for a Video
-def get_comments(video_id):
+# Get Comments for a Video (up to 100)
+def get_comments(video_id, max_comments=100):
     comments = []
-    try:
-        response = youtube.commentThreads().list(
-            part='snippet',
-            videoId=video_id,
-            maxResults=50,
-            textFormat='plainText'
-        ).execute()
+    next_page_token = None
 
-        for item in response.get('items', []):
-            comment = item['snippet']['topLevelComment']['snippet']['textDisplay']
-            comments.append(comment)
-    except:
-        pass
+    while len(comments) < max_comments:
+        try:
+            response = youtube.commentThreads().list(
+                part='snippet',
+                videoId=video_id,
+                maxResults=min(100, max_comments - len(comments)),
+                pageToken=next_page_token,
+                textFormat='plainText'
+            ).execute()
+
+            for item in response.get('items', []):
+                comment = item['snippet']['topLevelComment']['snippet']['textDisplay']
+                comments.append(comment)
+
+            next_page_token = response.get('nextPageToken')
+            if not next_page_token:
+                break
+        except:
+            break
+
     return comments
 
 # Get Video Details
@@ -95,28 +104,28 @@ def get_video_details(video_ids):
             })
     return pd.DataFrame(stats)
 
-# Sentiment Analysis using RoBERTa
+# Sentiment Analysis using RoBERTa (batch)
 def analyze_sentiment(comments):
     sentiments = {"POSITIVE": 0, "NEGATIVE": 0, "NEUTRAL": 0}
-    filtered_comments = [c for c in comments if len(c.strip()) > 5]
+    filtered_comments = [c for c in comments if len(c.strip()) > 5][:500]  # Limit to 500 comments
 
     if not filtered_comments:
         return sentiments
 
     labels_map = {0: "NEGATIVE", 1: "NEUTRAL", 2: "POSITIVE"}
 
-    for comment in filtered_comments[:300]:  # limit to 300 comments
-        try:
-            inputs = tokenizer(comment, return_tensors="pt", truncation=True, max_length=512, padding="max_length")
-            with torch.no_grad():
-                outputs = model(**inputs)
-                probs = F.softmax(outputs.logits, dim=-1)
-                label_id = torch.argmax(probs, dim=1).item()
-                sentiment = labels_map[label_id]
-                sentiments[sentiment] += 1
-        except Exception as e:
-            st.warning(f"⚠️ Skipping one comment due to error: {e}")
-            continue
+    try:
+        with torch.no_grad():
+            inputs = tokenizer(filtered_comments, return_tensors="pt", padding=True, truncation=True, max_length=512)
+            outputs = model(**inputs)
+            probs = F.softmax(outputs.logits, dim=-1)
+            labels = torch.argmax(probs, dim=1).tolist()
+
+        for label in labels:
+            sentiments[labels_map[label]] += 1
+
+    except Exception as e:
+        st.warning(f"⚠️ Sentiment analysis error: {e}")
 
     return sentiments
 
@@ -141,10 +150,12 @@ if channel_id:
         st.markdown(f"### 👁️ Total Views (last 50 videos): {total_views}")
         st.markdown(f"### 👍 Total Likes (last 50 videos): {total_likes}")
 
+        # Collect comments
         all_comments = []
         for vid in video_ids:
-            all_comments.extend(get_comments(vid))
+            all_comments.extend(get_comments(vid, max_comments=100))
 
+        # Sentiment analysis
         sentiments = analyze_sentiment(all_comments)
         sentiment_labels = {"POSITIVE": "😊 Positive", "NEGATIVE": "😡 Negative", "NEUTRAL": "😐 Neutral"}
         sentiment_display = [sentiment_labels.get(k, k) for k in sentiments.keys()]
@@ -158,6 +169,7 @@ if channel_id:
         )
         st.plotly_chart(fig_pie)
 
+        # Monthly Views Chart
         video_data['month'] = video_data['published_at'].apply(extract_month)
         monthly_views = video_data.groupby('month')['views'].sum().reset_index()
         month_order = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
