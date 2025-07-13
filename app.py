@@ -95,11 +95,11 @@ def get_video_details(video_ids):
 def analyze_sentiment(comments):
     sentiments = {"POSITIVE": 0, "NEGATIVE": 0}
     filtered_comments = [c for c in comments if len(c.strip()) > 5]
-    
+
     if not filtered_comments:
         return {"POSITIVE": 0, "NEGATIVE": 0}
 
-    results = sentiment_model(filtered_comments[:300])  # Limit to first 300 for speed
+    results = sentiment_model(filtered_comments[:300])  # Limit for speed
     for result in results:
         label = result['label'].upper()
         if label in sentiments:
@@ -114,15 +114,12 @@ def extract_month(published_at):
 if channel_id:
     st.info("🔄 Fetching data from YouTube...")
     try:
-        # Channel Name
         channel_name = get_channel_name(channel_id)
         st.markdown(f"## 📺 Channel: *{channel_name}*")
 
-        # Video IDs and Data
         video_ids = get_recent_video_ids(channel_id)
         video_data = get_video_details(video_ids)
 
-        # Total Views and Likes
         total_views = video_data['views'].sum()
         total_likes = video_data['likes'].sum()
 
@@ -130,12 +127,10 @@ if channel_id:
         st.markdown(f"### 👁️ Total Views (last 50 videos): {total_views}")
         st.markdown(f"### 👍 Total Likes (last 50 videos): {total_likes}")
 
-        # Collect Comments
         all_comments = []
         for vid in video_ids:
             all_comments.extend(get_comments(vid))
 
-        # Sentiment Analysis
         sentiments = analyze_sentiment(all_comments)
         sentiment_labels = {"POSITIVE": "😊 Positive", "NEGATIVE": "😡 Negative"}
         sentiment_display = [sentiment_labels.get(k, k) for k in sentiments.keys()]
@@ -144,12 +139,11 @@ if channel_id:
         fig_pie = px.pie(
             names=sentiment_display,
             values=list(sentiments.values()),
-            title="Comment Sentiment Distribution (Hugging Face Model)",
+            title="Comment Sentiment Distribution",
             color_discrete_sequence=px.colors.qualitative.Set2
         )
         st.plotly_chart(fig_pie)
 
-        # Monthly Views Chart
         video_data['month'] = video_data['published_at'].apply(extract_month)
         monthly_views = video_data.groupby('month')['views'].sum().reset_index()
         month_order = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
