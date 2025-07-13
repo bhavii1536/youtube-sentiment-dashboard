@@ -1,13 +1,8 @@
-# Streamlit app requirements
 streamlit
 pandas
 numpy
-matplotlib
-plotly
 requests
+plotly
 google-api-python-client
-
-# Sentiment analysis
-transformers==4.40.0
-torch==2.2.2
-scipy
+transformers
+torch
