@@ -6,7 +6,7 @@ import seaborn as sns
 from datetime import datetime
 
 # 🔐 Use secret key from Streamlit secrets
-api_key = st.secrets["api_key"]
+api_key = st.secrets["YOUTUBE_API_KEY"]
 
 # 📺 Initialize YouTube API client
 youtube = build('youtube', 'v3', developerKey=api_key)
