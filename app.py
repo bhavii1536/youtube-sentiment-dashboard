@@ -5,36 +5,11 @@ import pandas as pd
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 import plotly.express as px
 
-# --- BEAUTIFY with CSS: gradient bg + fonts + input styling ---
-st.markdown("""
-    <style>
-    body {
-        background: linear-gradient(135deg, #fceabb, #f8b500);
-    }
-    .reportview-container {
-        background: linear-gradient(135deg, #e0c3fc, #8ec5fc);
-        color: #222;
-        font-family: 'Quicksand', sans-serif;
-    }
-    header, footer {visibility: hidden;}
-    h1, h2, h3, h4, h5 {
-        font-family: 'Quicksand', sans-serif;
-        color: #222;
-    }
-    .stTextInput>div>div>input {
-        background-color: #fff0db;
-        border: 2px solid #f8b500;
-        border-radius: 10px;
-        padding: 8px;
-        font-size: 18px;
-        font-weight: 600;
-        color: #222;
-    }
-    </style>
-""", unsafe_allow_html=True)
-
+# --- API Setup ---
 API_KEY = st.secrets["YOUTUBE_API_KEY"]
 youtube = build('youtube', 'v3', developerKey=API_KEY)
+
+# --- Functions ---
 
 def get_channel_name(channel_id):
     try:
@@ -103,32 +78,28 @@ def plot_pie_chart(sentiment_counts):
 
     fig = px.pie(df, values='Count', names='Sentiment',
                  color='Sentiment', color_discrete_map=colors,
-                 hole=0, title="Sentiment Distribution")
-    fig.update_traces(
-        textinfo='percent+label',
-        marker=dict(line=dict(color='white', width=2)),
-        hovertemplate='<b>%{label}</b><br>Comments: %{value}<br>Percent: %{percent}'
-    )
+                 hole=0.3, title="Sentiment Distribution")
     return fig
 
+# --- Streamlit UI ---
 def main():
-    st.title("📊 YouTube Sentiment & Engagement Dashboard")
+    st.title("YouTube Sentiment & Engagement Dashboard")
 
-    channel_id = st.text_input("📺 Enter YouTube Channel ID:")
+    channel_id = st.text_input("Enter YouTube Channel ID:")
 
     if channel_id:
         channel_name = get_channel_name(channel_id)
-        st.subheader(f"✨ Channel: {channel_name}")
+        st.subheader(f"Channel: {channel_name}")
 
         all_video_ids = get_video_ids(channel_id)
         total_videos_found = len(all_video_ids)
-        st.success(f"🎬 Found {total_videos_found} videos.")
+        st.success(f"Found {total_videos_found} videos.")
 
         if not all_video_ids:
             st.error("No videos found.")
             return
 
-        num_videos = st.slider("📌 Videos to analyze", 1, min(50, total_videos_found), 10)
+        num_videos = st.slider("Videos to analyze", 1, min(50, total_videos_found), 10)
         selected_video_ids = all_video_ids[:num_videos]
 
         st.info("Analyzing comments...")
@@ -158,26 +129,26 @@ def main():
         df = pd.DataFrame(final_data)
         sentiment_counts = df['sentiment'].value_counts()
         total_comments = len(df)
+
         positive = sentiment_counts.get("Positive", 0)
         negative = sentiment_counts.get("Negative", 0)
         neutral = sentiment_counts.get("Neutral", 0)
 
         def percent(part): return f"{(part / total_comments * 100):.2f}%" if total_comments > 0 else "0.00%"
 
-        # Show pie chart
+        # Pie Chart
         st.plotly_chart(plot_pie_chart(sentiment_counts), use_container_width=True)
 
-        # Print summary text below chart
-        st.markdown("### 📑 Final Summary Report")
-        st.text(f"===== Overall Sentiment Summary =====")
-        st.text(f"Total Comments Analyzed: {total_comments}")
-        st.text(f"Positive: {positive} ({percent(positive)})")
-        st.text(f"Negative: {negative} ({percent(negative)})")
-        st.text(f"Neutral: {neutral} ({percent(neutral)})")
+        # Summary
+        st.markdown("### Summary Report")
+        st.write(f"**Total Comments Analyzed:** {total_comments}")
+        st.write(f"**Positive:** {positive} ({percent(positive)})")
+        st.write(f"**Negative:** {negative} ({percent(negative)})")
+        st.write(f"**Neutral:** {neutral} ({percent(neutral)})")
 
-        st.text(f"===== Overall Channel Engagement =====")
-        st.text(f"Total Views on {num_videos} videos: {total_views}")
-        st.text(f"Total Likes on {num_videos} videos: {total_likes}")
+        st.markdown("### Channel Engagement")
+        st.write(f"**Total Views on {num_videos} videos:** {total_views}")
+        st.write(f"**Total Likes on {num_videos} videos:** {total_likes}")
 
 if __name__ == "__main__":
     main()
