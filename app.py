@@ -156,9 +156,9 @@ if channel_id:
             title="Comment Sentiment Distribution",
             color=[sentiment_labels[k] for k in sentiments.keys()],
             color_discrete_map={
-                "😊 Positive": "#FDB462",  # Changed to Orange
+                "😊 Positive": "#80B1D3",  # Changed to blue
                 "😡 Negative": "#FB8072",  # Red stays same
-                "😐 Neutral": "#80B1D3"   # Changed to Blue
+                "😐 Neutral": "#FDB462"   # Changed to orage
             }
         )
         st.plotly_chart(fig_pie)  # Show pie chart
