@@ -1,9 +1,9 @@
-seaborn
 streamlit
-google-api-python-client
 pandas
-vaderSentiment
-wordcloud
+numpy
 matplotlib
 plotly
-textblob
+google-api-python-client
+transformers
+torch
+requests
