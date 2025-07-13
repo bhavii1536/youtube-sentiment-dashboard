@@ -181,4 +181,3 @@ if channel_id:
     except Exception as e:
         st.error(f"❌ Error fetching data: {e}")
 
-last ok
