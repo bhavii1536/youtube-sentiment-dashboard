@@ -4,167 +4,128 @@ import pandas as pd
 from textblob import TextBlob
 import time
 
-# Load API Key securely
+# ⛓️ Setup API Key from secrets
 api_key = st.secrets["YOUTUBE_API_KEY"]
+
+# 🔌 Connect to YouTube API
 youtube = build('youtube', 'v3', developerKey=api_key)
 
-# =========================
-# FUNCTIONS
-# =========================
-
-def get_channel_stats(channel_id):
+# 📦 Get channel info
+def get_channel_stats(youtube, channel_id):
     request = youtube.channels().list(
-        part="snippet,statistics",
+        part="snippet,contentDetails,statistics",
         id=channel_id
     )
     response = request.execute()
-
+    
     if 'items' not in response or not response['items']:
-        return None
+        return None  # Handle invalid channel ID
+    
+    data = dict(
+        Channel_Name = response['items'][0]['snippet']['title'],
+        Subscribers = int(response['items'][0]['statistics'].get('subscriberCount', 0)),
+        Views = int(response['items'][0]['statistics'].get('viewCount', 0)),
+        Total_Videos = int(response['items'][0]['statistics'].get('videoCount', 0)),
+        Playlist_ID = response['items'][0]['contentDetails']['relatedPlaylists']['uploads']
+    )
+    return data
 
-    data = response['items'][0]
-    stats = {
-        "Channel Name": data['snippet']['title'],
-        "Subscribers": int(data['statistics'].get('subscriberCount', 0)),
-        "Total Views": int(data['statistics'].get('viewCount', 0)),
-        "Total Videos": int(data['statistics'].get('videoCount', 0)),
-        "Channel Created": data['snippet']['publishedAt'].split("T")[0]
-    }
-    return stats
+# 📹 Get video IDs from playlist
+def get_video_ids(youtube, playlist_id):
+    video_ids = []
+    next_page_token = None
+    while True:
+        request = youtube.playlistItems().list(
+            part="contentDetails",
+            playlistId=playlist_id,
+            maxResults=50,
+            pageToken=next_page_token
+        )
+        response = request.execute()
+        
+        for item in response['items']:
+            video_ids.append(item['contentDetails']['videoId'])
 
-def get_latest_videos(channel_id, max_results=5):
-    # Get uploads playlist
-    response = youtube.channels().list(part="contentDetails", id=channel_id).execute()
-    if 'items' not in response or not response['items']:
-        return []
-    uploads_playlist_id = response['items'][0]['contentDetails']['relatedPlaylists']['uploads']
+        next_page_token = response.get('nextPageToken')
+        if not next_page_token:
+            break
+    return video_ids
 
-    # Get latest video IDs
-    playlist_response = youtube.playlistItems().list(
-        part="snippet",
-        playlistId=uploads_playlist_id,
-        maxResults=max_results
-    ).execute()
-
-    videos = []
-    for item in playlist_response['items']:
-        video_id = item['snippet']['resourceId']['videoId']
-        title = item['snippet']['title']
-        published = item['snippet']['publishedAt']
-
-        video_response = youtube.videos().list(
-            part="statistics,snippet",
-            id=video_id
-        ).execute()
-
-        if 'items' in video_response and video_response['items']:
-            stats = video_response['items'][0]['statistics']
-            videos.append({
-                "Title": title,
-                "Video ID": video_id,
-                "Published Date": published.split("T")[0],
-                "Views": int(stats.get("viewCount", 0)),
-                "Likes": int(stats.get("likeCount", 0)),
-                "Comments": int(stats.get("commentCount", 0))
-            })
-    return videos
-
-def get_video_comments(video_id, max_comments=50):
+# 🧠 Get video comments
+def get_comments(youtube, video_id):
     comments = []
     try:
         request = youtube.commentThreads().list(
             part="snippet",
             videoId=video_id,
-            maxResults=min(max_comments, 100),
+            maxResults=50,
             textFormat="plainText"
         )
         response = request.execute()
-
-        for item in response["items"]:
-            comment = item["snippet"]["topLevelComment"]["snippet"]["textDisplay"]
+        
+        for item in response['items']:
+            comment = item['snippet']['topLevelComment']['snippet']['textDisplay']
             comments.append(comment)
     except Exception as e:
-        print("Error:", e)
+        pass  # If comments are disabled
     return comments
 
-def analyze_sentiment(comment):
-    blob = TextBlob(comment)
-    polarity = blob.sentiment.polarity
-    if polarity > 0.1:
-        return "😊 Positive"
-    elif polarity < -0.1:
-        return "😞 Negative"
-    else:
-        return "😐 Neutral"
+# 💬 Analyze sentiments
+def analyze_sentiment(comments):
+    sentiments = []
+    for comment in comments:
+        blob = TextBlob(comment)
+        polarity = blob.sentiment.polarity
+        if polarity > 0:
+            sentiment = "Positive"
+        elif polarity < 0:
+            sentiment = "Negative"
+        else:
+            sentiment = "Neutral"
+        sentiments.append((comment, polarity, sentiment))
+    return sentiments
 
-# =========================
-# UI
-# =========================
+# 🖼️ Streamlit UI
+st.set_page_config(page_title="YouTube Channel Analyzer", page_icon="📊")
+st.title("📊 YouTube Channel Analyzer")
+st.write("Enter a **channel username or channel ID** below:")
 
-st.set_page_config(page_title="📊 YouTube Channel Analyzer with Sentiment", layout="centered")
-st.title("📊 YouTube Channel Analyzer + 🧠 Sentiment Analysis")
-
-channel_id = st.text_input("🔍 Enter YouTube **Channel ID** (not username):")
+channel_id = st.text_input("🔍 Channel Name or ID", placeholder="UCBR8-60-B28hp2BmDPdntcQ")
 
 if channel_id:
-    with st.spinner("📡 Fetching channel info..."):
-        channel_info = get_channel_stats(channel_id)
+    with st.spinner("Fetching channel data..."):
+        channel_info = get_channel_stats(youtube, channel_id)
+        if not channel_info:
+            st.error("❌ Invalid channel ID or no data found.")
+        else:
+            st.subheader("📌 Channel Info")
+            st.write(f"**Name:** {channel_info['Channel_Name']}")
+            st.write(f"**Subscribers:** {channel_info['Subscribers']:,}")
+            st.write(f"**Total Views:** {channel_info['Views']:,}")
+            st.write(f"**Total Videos:** {channel_info['Total_Videos']:,}")
 
-    if not channel_info:
-        st.error("❌ Channel not found. Please check the ID.")
-    else:
-        st.success(f"✅ Fetched details for **{channel_info['Channel Name']}**")
+            st.subheader("📽️ Fetching Recent Videos...")
+            video_ids = get_video_ids(youtube, channel_info['Playlist_ID'])
 
-        # Overview
-        st.markdown("### 📌 Channel Overview")
-        col1, col2 = st.columns(2)
-        col1.metric("👥 Subscribers", f"{channel_info['Subscribers']:,}")
-        col2.metric("📺 Total Videos", f"{channel_info['Total Videos']:,}")
-        st.metric("👁️ Total Views", f"{channel_info['Total Views']:,}")
-        st.markdown(f"📅 **Channel Created on:** `{channel_info['Channel Created']}`")
+            if not video_ids:
+                st.warning("No videos found.")
+            else:
+                all_sentiments = []
+                for video_id in video_ids[:5]:  # Limit to first 5 videos for performance
+                    comments = get_comments(youtube, video_id)
+                    sentiments = analyze_sentiment(comments)
+                    all_sentiments.extend(sentiments)
+                    time.sleep(1)
 
-        st.markdown("---")
+                if all_sentiments:
+                    st.subheader("💬 Sentiment Analysis Report")
+                    df = pd.DataFrame(all_sentiments, columns=["Comment", "Polarity", "Sentiment"])
+                    st.dataframe(df)
 
-        # Latest Videos
-        st.markdown("### 🎥 Latest Videos")
-        with st.spinner("📡 Loading videos..."):
-            latest_videos = get_latest_videos(channel_id, max_results=5)
-
-        if latest_videos:
-            video_df = pd.DataFrame(latest_videos)
-            st.dataframe(video_df)
-
-            # Choose a video to analyze
-            selected_video = st.selectbox("🧠 Select a video to analyze comments:", video_df["Title"].tolist())
-            video_id = video_df[video_df["Title"] == selected_video]["Video ID"].values[0]
-
-            st.markdown(f"#### 💬 Sentiment Analysis for: **{selected_video}**")
-            with st.spinner("Analyzing comments..."):
-                comments = get_video_comments(video_id)
-                if comments:
-                    sentiment_data = [{"Comment": c, "Sentiment": analyze_sentiment(c)} for c in comments]
-                    sentiment_df = pd.DataFrame(sentiment_data)
-
-                    # Show results
-                    st.dataframe(sentiment_df)
-
-                    # Pie Chart
-                    pie = sentiment_df['Sentiment'].value_counts().reset_index()
-                    pie.columns = ['Sentiment', 'Count']
-                    st.markdown("#### 🥧 Sentiment Distribution")
-                    st.plotly_chart({
-                        "data": [{
-                            "labels": pie["Sentiment"],
-                            "values": pie["Count"],
-                            "type": "pie",
-                            "hole": .4
-                        }],
-                        "layout": {"title": "Comment Sentiment Breakdown"}
-                    })
+                    # 📊 Summary count
+                    st.subheader("📈 Sentiment Summary")
+                    st.bar_chart(df["Sentiment"].value_counts())
 
                 else:
-                    st.warning("No comments found or comments are disabled for this video.")
-        else:
-            st.warning("No videos found or uploads unavailable.")
-else:
-    st.info("👆 Enter a **valid Channel ID** to start analysis.")
+                    st.info("No comments found for recent videos.")
+
