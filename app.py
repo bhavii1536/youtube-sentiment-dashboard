@@ -1,154 +1,159 @@
 import streamlit as st
 from googleapiclient.discovery import build
-from googleapiclient.errors import HttpError
 import pandas as pd
-from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
-import plotly.express as px
+import matplotlib.pyplot as plt
+import seaborn as sns
+from datetime import datetime
 
-# --- API Setup ---
-API_KEY = st.secrets["YOUTUBE_API_KEY"]
-youtube = build('youtube', 'v3', developerKey=API_KEY)
+# 🔐 Use secret key from Streamlit secrets
+api_key = st.secrets["api_key"]
 
-# --- Functions ---
+# 📺 Initialize YouTube API client
+youtube = build('youtube', 'v3', developerKey=api_key)
 
-def get_channel_name(channel_id):
-    try:
-        res = youtube.channels().list(part='snippet', id=channel_id).execute()
-        return res['items'][0]['snippet']['title'] if res['items'] else "Unknown Channel"
-    except:
-        return "Unknown Channel"
+# 🚀 Get channel details
+def get_channel_stats(youtube, channel_username):
+    request = youtube.channels().list(
+        part='snippet,contentDetails,statistics',
+        forUsername=channel_username
+    )
+    response = request.execute()
 
-def get_video_ids(channel_id):
+    if not response['items']:
+        request = youtube.channels().list(
+            part='snippet,contentDetails,statistics',
+            id=channel_username
+        )
+        response = request.execute()
+
+    if not response['items']:
+        return None
+
+    return response['items'][0]
+
+# 📦 Get uploads playlist ID
+def get_uploads_playlist_id(channel_id):
+    res = youtube.channels().list(
+        part='contentDetails',
+        id=channel_id
+    ).execute()
+    return res['items'][0]['contentDetails']['relatedPlaylists']['uploads']
+
+# 🎞️ Get all video IDs
+def get_all_video_ids_from_playlist(playlist_id):
     video_ids = []
     next_page_token = None
-    try:
-        while True:
-            res = youtube.search().list(
-                part='id',
-                channelId=channel_id,
-                maxResults=50,
-                pageToken=next_page_token,
-                type='video',
-                order='date'
-            ).execute()
-            for item in res['items']:
-                video_ids.append(item['id']['videoId'])
-            next_page_token = res.get('nextPageToken')
-            if not next_page_token:
-                break
-    except:
-        return []
+    while True:
+        res = youtube.playlistItems().list(
+            part='contentDetails',
+            playlistId=playlist_id,
+            maxResults=50,
+            pageToken=next_page_token
+        ).execute()
+
+        video_ids += [item['contentDetails']['videoId'] for item in res['items']]
+        next_page_token = res.get('nextPageToken')
+        if not next_page_token:
+            break
     return video_ids
 
-def get_comments(video_id):
-    comments = []
-    try:
-        results = youtube.commentThreads().list(
-            part="snippet",
-            videoId=video_id,
-            textFormat="plainText",
-            maxResults=100
+# 📊 Get video details
+def get_video_details(video_ids):
+    all_data = []
+    for i in range(0, len(video_ids), 50):
+        response = youtube.videos().list(
+            part="snippet,statistics",
+            id=','.join(video_ids[i:i+50])
         ).execute()
-        for item in results['items']:
-            comment = item['snippet']['topLevelComment']['snippet']['textDisplay']
-            comments.append(comment)
-    except:
-        pass
-    return comments
+        for video in response['items']:
+            published_at = video['snippet']['publishedAt']
+            published_month = datetime.strptime(published_at, "%Y-%m-%dT%H:%M:%SZ").strftime("%Y-%m")
+            data = {
+                'title': video['snippet']['title'],
+                'views': int(video['statistics'].get('viewCount', 0)),
+                'likes': int(video['statistics'].get('likeCount', 0)),
+                'comments': int(video['statistics'].get('commentCount', 0)),
+                'month': published_month
+            }
+            all_data.append(data)
+    return pd.DataFrame(all_data)
 
-def analyze_sentiment(text):
-    analyzer = SentimentIntensityAnalyzer()
-    score = analyzer.polarity_scores(text)['compound']
-    if score > 0.1:
-        return "Positive"
-    elif score < -0.1:
-        return "Negative"
+# 🌟 Streamlit UI
+st.set_page_config(page_title="YouTube Channel Analyzer 🎬", layout="centered")
+st.title("📊 YouTube Channel Analyzer")
+st.write("Enter a **channel username** or **channel ID** below:")
+
+channel_input = st.text_input("🔍 Channel Name or ID")
+
+if channel_input:
+    channel_data = get_channel_stats(youtube, channel_input)
+    if not channel_data:
+        st.error("❌ Channel not found. Please check the name or ID.")
     else:
-        return "Neutral"
+        st.success("✅ Channel found!")
+        st.subheader(f"📺 {channel_data['snippet']['title']}")
+        
+        subscribers = int(channel_data['statistics'].get('subscriberCount', 0))
+        st.write(f"👥 Subscribers: **{subscribers:,}**")
 
-def plot_pie_chart(sentiment_counts):
-    colors = {
-        'Positive': '#6BCB77',
-        'Negative': '#FF6B6B',
-        'Neutral': '#A0AEC0'
-    }
+        channel_id = channel_data['id']
+        uploads_playlist_id = get_uploads_playlist_id(channel_id)
+        all_video_ids = get_all_video_ids_from_playlist(uploads_playlist_id)
 
-    df = sentiment_counts.reset_index()
-    df.columns = ['Sentiment', 'Count']
+        st.write(f"🎞️ Total Videos: **{len(all_video_ids)}**")
 
-    fig = px.pie(df, values='Count', names='Sentiment',
-                 color='Sentiment', color_discrete_map=colors,
-                 hole=0.3, title="Sentiment Distribution")
-    return fig
+        df_videos = get_video_details(all_video_ids)
 
-# --- Streamlit UI ---
-def main():
-    st.title("YouTube Sentiment & Engagement Dashboard")
+        total_views = df_videos['views'].sum()
+        total_likes = df_videos['likes'].sum()
+        total_comments = df_videos['comments'].sum()
 
-    channel_id = st.text_input("Enter YouTube Channel ID:")
+        # 🍰 Total Performance Pie Chart
+        st.markdown("### 📌 Overall Performance")
+        chart_data = {
+            '👁️ Views': total_views,
+            '👍 Likes': total_likes,
+            '💬 Comments': total_comments
+        }
 
-    if channel_id:
-        channel_name = get_channel_name(channel_id)
-        st.subheader(f"Channel: {channel_name}")
+        fig1, ax1 = plt.subplots()
+        ax1.pie(chart_data.values(), labels=chart_data.keys(), autopct='%1.1f%%', startangle=90,
+                colors=['#87CEEB', '#90EE90', '#FFB6C1'])
+        ax1.axis('equal')
+        st.pyplot(fig1)
 
-        all_video_ids = get_video_ids(channel_id)
-        total_videos_found = len(all_video_ids)
-        st.success(f"Found {total_videos_found} videos.")
+        # 📅 Month-wise Views Chart
+        st.markdown("### 📆 Monthly Views Trend")
 
-        if not all_video_ids:
-            st.error("No videos found.")
-            return
+        monthly_views = df_videos.groupby('month')['views'].sum().sort_index()
+        monthly_df = monthly_views.reset_index()
+        monthly_df['pct_change'] = monthly_df['views'].pct_change().fillna(0) * 100
 
-        num_videos = st.slider("Videos to analyze", 1, min(50, total_videos_found), 10)
-        selected_video_ids = all_video_ids[:num_videos]
+        fig2, ax2 = plt.subplots(figsize=(10, 4))
+        sns.lineplot(data=monthly_df, x='month', y='views', marker='o', ax=ax2)
+        ax2.set_ylabel("Views")
+        ax2.set_xlabel("Month")
+        plt.xticks(rotation=45)
+        st.pyplot(fig2)
 
-        st.info("Analyzing comments...")
+        # 🔺🔻 View Changes by Month
+        st.markdown("### 📈 View Changes by Month")
+        for i in range(1, len(monthly_df)):
+            current = monthly_df.iloc[i]
+            previous = monthly_df.iloc[i - 1]
+            diff = current['views'] - previous['views']
+            arrow = "🔺" if diff > 0 else "🔻"
+            percent = current['pct_change']
+            st.write(f"{current['month']}: {arrow} {abs(percent):.2f}% ({current['views']:,} views)")
 
-        final_data = []
-        total_views = 0
-        total_likes = 0
+        # 🍰 Monthly Views Pie Chart
+        st.markdown("### 🧁 Monthly Views Contribution")
+        fig3, ax3 = plt.subplots()
+        ax3.pie(monthly_views, labels=monthly_views.index, autopct='%1.1f%%', startangle=90,
+                colors=plt.cm.Pastel1.colors)
+        ax3.axis('equal')
+        st.pyplot(fig3)
 
-        for vid in selected_video_ids:
-            comments = get_comments(vid)
-            for comment in comments:
-                sentiment = analyze_sentiment(comment)
-                final_data.append({"video_id": vid, "comment": comment, "sentiment": sentiment})
-            try:
-                stats = youtube.videos().list(part="statistics", id=vid).execute()
-                if stats["items"]:
-                    stat = stats["items"][0]["statistics"]
-                    total_views += int(stat.get("viewCount", 0))
-                    total_likes += int(stat.get("likeCount", 0))
-            except:
-                pass
-
-        if not final_data:
-            st.warning("No comments found.")
-            return
-
-        df = pd.DataFrame(final_data)
-        sentiment_counts = df['sentiment'].value_counts()
-        total_comments = len(df)
-
-        positive = sentiment_counts.get("Positive", 0)
-        negative = sentiment_counts.get("Negative", 0)
-        neutral = sentiment_counts.get("Neutral", 0)
-
-        def percent(part): return f"{(part / total_comments * 100):.2f}%" if total_comments > 0 else "0.00%"
-
-        # Pie Chart
-        st.plotly_chart(plot_pie_chart(sentiment_counts), use_container_width=True)
-
-        # Summary
-        st.markdown("### Summary Report")
-        st.write(f"**Total Comments Analyzed:** {total_comments}")
-        st.write(f"**Positive:** {positive} ({percent(positive)})")
-        st.write(f"**Negative:** {negative} ({percent(negative)})")
-        st.write(f"**Neutral:** {neutral} ({percent(neutral)})")
-
-        st.markdown("### Channel Engagement")
-        st.write(f"**Total Views on {num_videos} videos:** {total_views}")
-        st.write(f"**Total Likes on {num_videos} videos:** {total_likes}")
-
-if __name__ == "__main__":
-    main()
+        # 📋 Video table
+        with st.expander("📋 Show All Video Stats"):
+            st.dataframe(df_videos)
