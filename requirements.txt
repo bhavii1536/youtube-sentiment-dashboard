@@ -3,7 +3,8 @@ pandas
 numpy
 matplotlib
 plotly
-google-api-python-client
-transformers
-torch
 requests
+google-api-python-client
+transformers==4.40.0
+torch
+textblob
