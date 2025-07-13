@@ -7,7 +7,9 @@ import plotly.express as px
 from datetime import datetime
 from collections import defaultdict
 from googleapiclient.discovery import build
-from transformers import pipeline
+from transformers import AutoTokenizer, AutoModelForSequenceClassification
+import torch
+import torch.nn.functional as F
 
 # Load API Key from Streamlit secrets
 API_KEY = st.secrets["YOUTUBE_API_KEY"]
@@ -17,15 +19,18 @@ YOUTUBE_API_VERSION = 'v3'
 # Initialize YouTube API
 youtube = build(YOUTUBE_API_SERVICE_NAME, YOUTUBE_API_VERSION, developerKey=API_KEY)
 
-# Load Hugging Face sentiment analysis model (cached)
+# Load CardiffNLP sentiment model
 @st.cache_resource
 def load_sentiment_model():
-    return pipeline("sentiment-analysis")
+    model_name = "cardiffnlp/twitter-roberta-base-sentiment"
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    model = AutoModelForSequenceClassification.from_pretrained(model_name)
+    return tokenizer, model
 
-sentiment_model = load_sentiment_model()
+tokenizer, model = load_sentiment_model()
 
 # Streamlit App Title
-st.title("📊 YouTube Channel Insights + Sentiment Analysis")
+st.title("📊 YouTube Channel Insights + Sentiment Analysis (w/ Neutral)")
 
 # Input: YouTube Channel ID
 channel_id = st.text_input("Enter YouTube Channel ID:")
@@ -91,19 +96,25 @@ def get_video_details(video_ids):
             })
     return pd.DataFrame(stats)
 
-# Sentiment Analysis using Hugging Face
+# New Sentiment Analysis with Neutral
 def analyze_sentiment(comments):
-    sentiments = {"POSITIVE": 0, "NEGATIVE": 0}
+    sentiments = {"POSITIVE": 0, "NEGATIVE": 0, "NEUTRAL": 0}
     filtered_comments = [c for c in comments if len(c.strip()) > 5]
 
     if not filtered_comments:
-        return {"POSITIVE": 0, "NEGATIVE": 0}
+        return sentiments
 
-    results = sentiment_model(filtered_comments[:300])  # Limit for speed
-    for result in results:
-        label = result['label'].upper()
-        if label in sentiments:
-            sentiments[label] += 1
+    labels_map = {0: "NEGATIVE", 1: "NEUTRAL", 2: "POSITIVE"}
+
+    for comment in filtered_comments[:300]:  # Limit for speed
+        inputs = tokenizer(comment, return_tensors="pt", truncation=True)
+        with torch.no_grad():
+            outputs = model(**inputs)
+            probs = F.softmax(outputs.logits, dim=-1)
+            label_id = torch.argmax(probs, dim=1).item()
+            sentiment = labels_map[label_id]
+            sentiments[sentiment] += 1
+
     return sentiments
 
 # Extract Month Name
@@ -132,7 +143,11 @@ if channel_id:
             all_comments.extend(get_comments(vid))
 
         sentiments = analyze_sentiment(all_comments)
-        sentiment_labels = {"POSITIVE": "😊 Positive", "NEGATIVE": "😡 Negative"}
+        sentiment_labels = {
+            "POSITIVE": "😊 Positive",
+            "NEGATIVE": "😡 Negative",
+            "NEUTRAL": "😐 Neutral"
+        }
         sentiment_display = [sentiment_labels.get(k, k) for k in sentiments.keys()]
 
         st.markdown("## 🥧 Sentiment Analysis Summary")
