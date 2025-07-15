@@ -5,6 +5,7 @@ import requests
 import matplotlib.pyplot as plt
 import plotly.express as px
 from datetime import datetime
+from calendar import month_abbr
 from googleapiclient.discovery import build
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
 import torch
@@ -156,8 +157,12 @@ if channel_id:
         st.subheader("📈 Monthly Views")
 
         video_df['month'] = video_df['published_at'].apply(extract_month)
-        month_order = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
+
+        # Dynamically build month list up to current month
+        current_month_num = datetime.now().month
+        month_order = list(month_abbr)[1:current_month_num + 1]  # ['Jan', ..., current month]
         video_df['month'] = pd.Categorical(video_df['month'], categories=month_order, ordered=True)
+
         monthly_views = video_df.groupby('month')['views'].sum().reset_index().sort_values('month')
 
         line = px.line(
